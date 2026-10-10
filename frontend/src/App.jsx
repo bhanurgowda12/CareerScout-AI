@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import StudentProfile from './StudentProfile.jsx';
 
 const highlights = [
   {
@@ -20,6 +21,7 @@ const highlights = [
 
 function App() {
   const [apiStatus, setApiStatus] = useState('checking');
+  const [currentPage, setCurrentPage] = useState('home');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -55,17 +57,41 @@ function App() {
   return (
     <main>
       <header className="site-header">
-        <a className="brand" href="#top" aria-label="CareerScout AI home">
+        <a className="brand" href="#top" aria-label="CareerScout AI home" onClick={() => setCurrentPage('home')}>
           <span className="brand-mark" aria-hidden="true">C</span>
           <span>CareerScout<span className="brand-ai"> AI</span></span>
         </a>
         <nav className="site-nav" aria-label="Main navigation">
-          <a href="#how-it-works">How it works</a>
-          <a href="#explore">Explore</a>
+          {currentPage === 'home' ? (
+            <>
+              <a href="#how-it-works">How it works</a>
+              <a href="#explore">Explore</a>
+            </>
+          ) : (
+            <a href="#top" onClick={() => setCurrentPage('home')}>Home</a>
+          )}
+          <a
+            href="#student-profile"
+            aria-current={currentPage === 'profile' ? 'page' : undefined}
+            onClick={(event) => {
+              event.preventDefault();
+              setCurrentPage('profile');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          >
+            Student Profile
+          </a>
         </nav>
-        <a className="nav-cta" href="#explore">Find your direction <span aria-hidden="true">↗</span></a>
+        <a
+          className="nav-cta"
+          href={currentPage === 'home' ? '#explore' : '#top'}
+          onClick={currentPage === 'profile' ? () => setCurrentPage('home') : undefined}
+        >
+          {currentPage === 'home' ? 'Find your direction' : 'Back to CareerScout'} <span aria-hidden="true">↗</span>
+        </a>
       </header>
 
+      {currentPage === 'profile' ? <StudentProfile /> : <>
       <section className="hero" id="top">
         <div className="hero-copy">
           <p className="eyebrow"><span className="eyebrow-dot" /> A clearer path starts here</p>
@@ -123,9 +149,10 @@ function App() {
           ))}
         </div>
       </section>
+      </>}
 
       <footer className="site-footer">
-        <a className="brand footer-brand" href="#top">
+        <a className="brand footer-brand" href="#top" onClick={() => setCurrentPage('home')}>
           <span className="brand-mark" aria-hidden="true">C</span>
           <span>CareerScout<span className="brand-ai"> AI</span></span>
         </a>
