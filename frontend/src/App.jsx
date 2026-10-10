@@ -1,4 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import AuthPanel from './AuthPanel.jsx';
+import { auth } from './firebase.js';
 import StudentProfile from './StudentProfile.jsx';
 
 const highlights = [
@@ -19,9 +22,40 @@ const highlights = [
   },
 ];
 
+function hasVerifiedAccess(user) {
+  return Boolean(user && (
+    user.emailVerified
+    || user.providerData?.some((provider) => provider.providerId === 'google.com')
+  ));
+}
+
 function App() {
   const [apiStatus, setApiStatus] = useState('checking');
   const [currentPage, setCurrentPage] = useState('home');
+  const [authUser, setAuthUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [logoutPending, setLogoutPending] = useState(false);
+  const [authNotice, setAuthNotice] = useState('');
+
+  useEffect(() => {
+    if (!auth) {
+      setAuthReady(true);
+      return undefined;
+    }
+
+    return onAuthStateChanged(
+      auth,
+      (user) => {
+        setAuthUser(user);
+        setAuthReady(true);
+      },
+      () => {
+        setAuthUser(null);
+        setAuthReady(true);
+        setAuthNotice('Your sign-in state could not be restored. Please try signing in again.');
+      },
+    );
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -54,6 +88,28 @@ function App() {
     disconnected: 'Backend Disconnected',
   }[apiStatus];
 
+  function handleAuthenticated(user) {
+    setAuthUser(user);
+    setAuthReady(true);
+    setAuthNotice('');
+    setCurrentPage(hasVerifiedAccess(user) ? 'home' : 'auth');
+  }
+
+  async function handleLogout() {
+    if (!auth) return;
+
+    setLogoutPending(true);
+    setAuthNotice('');
+    try {
+      await signOut(auth);
+      setCurrentPage('home');
+    } catch {
+      setAuthNotice('You could not be signed out. Please try again.');
+    } finally {
+      setLogoutPending(false);
+    }
+  }
+
   return (
     <main>
       <header className="site-header">
@@ -75,13 +131,44 @@ function App() {
             aria-current={currentPage === 'profile' ? 'page' : undefined}
             onClick={(event) => {
               event.preventDefault();
-              setCurrentPage('profile');
+              if (hasVerifiedAccess(authUser)) {
+                setAuthNotice('');
+                setCurrentPage('profile');
+              } else {
+                setCurrentPage('auth');
+                setAuthNotice(authUser
+                  ? 'Verify your email before opening your Student Profile.'
+                  : 'Sign in or create an account, then verify your email to open your Student Profile.');
+              }
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
           >
             Student Profile
           </a>
         </nav>
+        <div className="account-controls">
+          {!authReady ? (
+            <span className="account-status" role="status">Checking sign-in...</span>
+          ) : authUser ? (
+            <>
+              <span className="account-email" title={authUser.email || 'Signed in'}>
+                {authUser.email || 'Signed in'}
+              </span>
+              {!hasVerifiedAccess(authUser) && (
+                <button className="account-action" type="button" onClick={() => setCurrentPage('auth')}>
+                  Verify email
+                </button>
+              )}
+              <button className="account-action" type="button" onClick={handleLogout} disabled={logoutPending}>
+                {logoutPending ? 'Signing out...' : 'Log out'}
+              </button>
+            </>
+          ) : (
+            <button className="account-action" type="button" onClick={() => setCurrentPage('auth')}>
+              Sign in
+            </button>
+          )}
+        </div>
         <a
           className="nav-cta"
           href={currentPage === 'home' ? '#explore' : '#top'}
@@ -91,7 +178,13 @@ function App() {
         </a>
       </header>
 
-      {currentPage === 'profile' ? <StudentProfile /> : <>
+      {authNotice && <p className="auth-global-notice" role="alert">{authNotice}</p>}
+
+      {currentPage === 'profile' && hasVerifiedAccess(authUser) ? (
+        <StudentProfile user={authUser} onRequestSignIn={() => setCurrentPage('auth')} />
+      ) : currentPage === 'auth' || currentPage === 'profile' ? (
+        <AuthPanel user={authUser} onAuthenticated={handleAuthenticated} />
+      ) : <>
       <section className="hero" id="top">
         <div className="hero-copy">
           <p className="eyebrow"><span className="eyebrow-dot" /> A clearer path starts here</p>
