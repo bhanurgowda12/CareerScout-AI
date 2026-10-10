@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Frontend build output
+dist/
+build/
+
+# Python environments and cache
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+
+# Local environment files (keep the example template)
+.env
+.env.*
+!.env.example
+
+# Test and coverage output
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
