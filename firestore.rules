@@ -19,6 +19,14 @@ service cloud.firestore {
       match /profileHistory/{versionId} {
         allow read, write: if isVerifiedOwner();
       }
+
+      match /careerRecommendations/{recommendationId} {
+        allow read, create: if isVerifiedOwner();
+      }
+
+      match /skillProgress/{progressId} {
+        allow read, write: if isVerifiedOwner();
+      }
     }
   }
 }

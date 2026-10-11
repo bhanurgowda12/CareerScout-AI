@@ -15,6 +15,19 @@ const recommendationSchema = {
           whyItSuits: { type: 'string' },
           relevantSkills: { type: 'array', items: { type: 'string' } },
           missingSkills: { type: 'array', items: { type: 'string' } },
+          skillLearningPlan: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                skill: { type: 'string' },
+                priority: { type: 'string', enum: ['Beginner', 'Intermediate', 'Advanced'] },
+                sequenceOrder: { type: 'integer', minimum: 1 },
+              },
+              required: ['skill', 'priority', 'sequenceOrder'],
+              additionalProperties: false,
+            },
+          },
           learningRoadmap: {
             type: 'array',
             items: {
@@ -37,6 +50,7 @@ const recommendationSchema = {
           'whyItSuits',
           'relevantSkills',
           'missingSkills',
+          'skillLearningPlan',
           'learningRoadmap',
           'suggestedPortfolioProject',
           'nextSteps',
@@ -175,6 +189,19 @@ function validateRecommendations(value) {
     && recommendation.whyItSuits.trim().length > 0
     && isStringArray(recommendation.relevantSkills)
     && isStringArray(recommendation.missingSkills)
+    && Array.isArray(recommendation.skillLearningPlan)
+    && recommendation.skillLearningPlan.length === recommendation.missingSkills.length
+    && recommendation.skillLearningPlan.every((item) => (
+      item
+      && typeof item.skill === 'string'
+      && item.skill.trim().length > 0
+      && recommendation.missingSkills.some((skill) => skill.toLowerCase() === item.skill.toLowerCase())
+      && ['Beginner', 'Intermediate', 'Advanced'].includes(item.priority)
+      && Number.isInteger(item.sequenceOrder)
+      && item.sequenceOrder > 0
+    ))
+    && new Set(recommendation.skillLearningPlan.map((item) => item.skill.toLowerCase())).size
+      === recommendation.skillLearningPlan.length
     && Array.isArray(recommendation.learningRoadmap)
     && recommendation.learningRoadmap.length > 0
     && recommendation.learningRoadmap.every((phase) => (
@@ -245,7 +272,7 @@ export async function generateCareerRecommendations(studentProfile) {
     'You are a practical career guide for college students.',
     'Recommend career paths based only on the student context below. Do not promise a job or invent credentials.',
     'Return 3 to 5 distinct career paths in the provided JSON schema. Give compatibility scores as integers from 0 to 100; they are directional estimates, not hiring predictions.',
-    'For each path, explain why it suits the student, identify relevant existing skills and missing or recommended skills, give a beginner-friendly phased roadmap, propose one portfolio project, and list concrete next steps.',
+    'For each path, explain why it suits the student, identify relevant existing skills and missing or recommended skills, assign every missing skill a Beginner, Intermediate, or Advanced learning priority based on prerequisites, and give a sequenceOrder starting at 1 that puts foundational skills first. Give a beginner-friendly phased roadmap, propose one portfolio project, and list concrete next steps.',
     'Do not include the student name, email address, or unsupported claims.',
     `Student context: ${JSON.stringify(profile)}`,
   ].join('\n\n');

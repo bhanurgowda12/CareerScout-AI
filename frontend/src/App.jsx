@@ -4,6 +4,7 @@ import AuthPanel from './AuthPanel.jsx';
 import { auth } from './firebase.js';
 import StudentProfile from './StudentProfile.jsx';
 import CareerRecommendations from './CareerRecommendations.jsx';
+import SkillGapLearning from './SkillGapLearning.jsx';
 
 const highlights = [
   {
@@ -150,6 +151,11 @@ function App() {
             aria-current={currentPage === 'recommendations' ? 'page' : undefined}
             onClick={(event) => { event.preventDefault(); openProtectedPage('recommendations', 'Career Recommendations'); }}
           >Career Recommendations</a>
+          <a
+            href="#skill-gap-learning"
+            aria-current={currentPage === 'learning' ? 'page' : undefined}
+            onClick={(event) => { event.preventDefault(); openProtectedPage('learning', 'Skill Gap & Learning Resources'); }}
+          >Skill Gap & Learning Resources</a>
         </nav>
         <div className="account-controls">
           {!authReady ? (
@@ -193,9 +199,13 @@ function App() {
           onOpenProfile={() => setCurrentPage('profile')}
           onRequestSignIn={() => setCurrentPage('auth')}
         />
+      ) : currentPage === 'learning' && hasVerifiedAccess(authUser) ? (
+        <SkillGapLearning user={authUser} onRequestSignIn={() => setCurrentPage('auth')} />
       ) : currentPage === 'auth' || currentPage === 'profile' ? (
         <AuthPanel user={authUser} onAuthenticated={handleAuthenticated} />
       ) : currentPage === 'recommendations' ? (
+        <AuthPanel user={authUser} onAuthenticated={handleAuthenticated} />
+      ) : currentPage === 'learning' ? (
         <AuthPanel user={authUser} onAuthenticated={handleAuthenticated} />
       ) : <>
       <section className="hero" id="top">

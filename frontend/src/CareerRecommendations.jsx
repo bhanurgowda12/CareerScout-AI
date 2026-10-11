@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { useCareerRecommendations } from './ai.js';
 import { auth, firestore } from './firebase.js';
 
@@ -22,11 +22,38 @@ function hasCareerProfileData(profile) {
   );
 }
 
+function reportRecommendationFirestoreFailure(operation, user, error) {
+  if (!import.meta.env.DEV) return;
+  console.error('[CareerScout Firestore] Career recommendations request failed', {
+    operation,
+    errorCode: error?.code || 'unknown',
+    firebaseConfigured: Boolean(firestore),
+    authenticatedUserExists: Boolean(auth?.currentUser),
+    userMatchesComponent: Boolean(auth?.currentUser?.uid && auth.currentUser.uid === user?.uid),
+    accountVerifiedOrGoogle: Boolean(user?.emailVerified || user?.providerData?.some((provider) => provider.providerId === 'google.com')),
+    collectionPath: 'users/{authenticatedUid}/careerRecommendations',
+  });
+}
+
+function getRecommendationFirestoreMessage(error, operation) {
+  if (error?.code === 'permission-denied') {
+    return `Firestore denied the ${operation}. Deploy the current firestore.rules and confirm you are signed in to the same Firebase project.`;
+  }
+  if (error?.code === 'unauthenticated') {
+    return 'Your sign-in expired. Sign in again, then retry.';
+  }
+  if (error?.code === 'unavailable' || error?.code === 'network-request-failed') {
+    return 'Firestore is unavailable. Check your connection and retry.';
+  }
+  return `Saved recommendations could not be ${operation === 'save' ? 'saved' : 'loaded'}. Check your connection and Firestore configuration.`;
+}
+
 function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState('');
   const [profileLoadAttempt, setProfileLoadAttempt] = useState(0);
+  const [recommendationSaveError, setRecommendationSaveError] = useState('');
   const { recommendations, loading, error, requestRecommendations } = useCareerRecommendations();
 
   useEffect(() => {
@@ -59,9 +86,21 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
     return () => { cancelled = true; };
   }, [user?.uid, profileLoadAttempt]);
 
-  function generateRecommendations() {
+  async function generateRecommendations() {
     if (!profile || loading || auth?.currentUser?.uid !== user?.uid) return;
-    requestRecommendations(profile);
+    setRecommendationSaveError('');
+    const generated = await requestRecommendations(profile);
+    if (!generated || auth?.currentUser?.uid !== user?.uid) return;
+
+    try {
+      await addDoc(collection(firestore, 'users', user.uid, 'careerRecommendations'), {
+        careerRecommendations: generated.careerRecommendations,
+        generatedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      reportRecommendationFirestoreFailure('save', user, error);
+      setRecommendationSaveError(`Recommendations were generated, but could not be saved. ${getRecommendationFirestoreMessage(error, 'save')}`);
+    }
   }
 
   return (
@@ -125,6 +164,8 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
               <button className="button button-secondary" type="button" onClick={generateRecommendations} disabled={loading}>Retry</button>
             </div>
           )}
+
+          {recommendationSaveError && <p className="recommendation-save-error" role="alert">{recommendationSaveError}</p>}
 
           {recommendations && !loading && (
             <>

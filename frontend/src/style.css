@@ -261,6 +261,65 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .career-next-steps p { margin: 0; color: #59635d; font-size: 10px; line-height: 1.65; }
 .career-next-steps ol { display: grid; gap: 5px; }
 
+.skill-gap-page { width: min(1060px, calc(100% - 96px)); margin: 0 auto; padding: 62px 0 78px; }
+.skill-gap-intro { max-width: 700px; margin: 0 auto 38px; text-align: center; }
+.skill-gap-intro .eyebrow { margin-bottom: 13px; }
+.skill-gap-intro h1 { margin: 0 0 13px; font-size: 42px; }
+.skill-gap-intro > p:last-child { max-width: 590px; margin: 0 auto; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.skill-gap-state { min-height: 150px; padding: 27px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 11px; border: 1px solid var(--line); border-radius: 4px; background: rgb(255 255 255 / 65%); text-align: center; }
+.skill-gap-state p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.skill-gap-state .button { cursor: pointer; }
+.skill-gap-state--empty h2 { margin: 0; font-size: 23px; }
+.skill-gap-selector, .skill-gap-career-select { display: grid; gap: 8px; }
+.skill-gap-selector { margin-bottom: 12px; }
+.skill-gap-career-select { max-width: 540px; margin-bottom: 23px; }
+.skill-gap-selector label, .skill-gap-career-select label { color: #46534a; font-size: 11px; font-weight: 700; }
+.skill-gap-selector select, .skill-gap-career-select select { width: 100%; min-height: 45px; padding: 10px 12px; border: 1px solid #d8ded5; border-radius: 3px; outline: none; background: #fff; color: var(--ink); font: 12px 'DM Sans', sans-serif; }
+.skill-gap-selector select:focus, .skill-gap-career-select select:focus { border-color: #6d9275; box-shadow: 0 0 0 3px rgb(75 120 83 / 10%); }
+.skill-gap-career { padding-top: 22px; border-top: 1px solid var(--line); }
+.skill-gap-career-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.skill-gap-career-heading .eyebrow { margin: 0 0 7px; }
+.skill-gap-career-heading h2 { font-size: 24px; }
+.skill-gap-fit { display: grid; justify-items: end; color: var(--green); font: 700 21px 'Manrope', sans-serif; }
+.skill-gap-fit small { color: var(--muted); font: 10px 'DM Sans', sans-serif; }
+.skill-gap-reason { max-width: 790px; margin: 15px 0 24px; color: #59635d; font-size: 12px; line-height: 1.7; }
+.skill-gap-columns { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.skill-gap-columns h3, .skill-gap-section-heading h3 { margin: 0 0 13px; font: 700 15px 'Manrope', sans-serif; }
+.skill-gap-muted { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.skill-gap-sequence ol { margin: 0; padding: 0; display: grid; gap: 8px; list-style: none; }
+.skill-gap-sequence li { min-width: 0; display: grid; grid-template-columns: 25px minmax(0, 1fr) auto; align-items: center; gap: 9px; color: #47534a; font-size: 11px; }
+.skill-sequence-number { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; border-radius: 50%; background: #e9eddf; color: var(--green); font-size: 10px; font-weight: 700; }
+.skill-priority { width: fit-content; padding: 4px 7px; border-radius: 3px; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.skill-priority--beginner { background: #e8f1e6; color: #396442; }
+.skill-priority--intermediate { background: #f6efdc; color: #79612b; }
+.skill-priority--advanced { background: #f7e9e3; color: #904b39; }
+.skill-gap-resources { padding-top: 23px; }
+.skill-gap-section-heading { margin-bottom: 14px; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.skill-gap-section-heading .eyebrow { margin: 0 0 6px; }
+.skill-gap-section-heading h3 { margin: 0; font-size: 20px; }
+.skill-resource-list { display: grid; gap: 12px; }
+.skill-resource { min-width: 0; padding: 17px 18px; border: 1px solid var(--line); border-radius: 4px; background: rgb(255 255 255 / 68%); }
+.skill-resource--completed { border-color: #b7c9ae; background: #f7faf3; }
+.skill-resource-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
+.skill-resource-heading > div { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.skill-resource-heading h4 { margin: 0 0 6px; color: var(--ink); font: 700 14px 'Manrope', sans-serif; overflow-wrap: anywhere; }
+.skill-resource-heading .button { min-height: 38px; flex: 0 0 auto; border: 0; cursor: pointer; font-size: 10px; }
+.skill-resource-heading .button-secondary { background: #fff; border: 1px solid #cbd2c9; }
+.skill-resource-heading button:disabled { cursor: wait; opacity: 0.65; }
+.skill-video-heading { margin-top: 16px; padding-top: 13px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); }
+.skill-video-heading h5 { margin: 0; color: #46534a; font-size: 10px; }
+.skill-video-heading .small-action { min-height: 29px; cursor: pointer; }
+.skill-gap-error { margin: 10px 0 0; color: #a04d3c; font-size: 11px; line-height: 1.55; }
+.youtube-resource-list { margin: 12px 0 0; padding: 0; display: grid; gap: 9px; list-style: none; }
+.youtube-resource-list a { min-width: 0; display: grid; grid-template-columns: 116px minmax(0, 1fr) 20px; align-items: center; gap: 12px; color: var(--ink); }
+.youtube-resource-list img { width: 116px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 3px; background: #e8e9e4; }
+.youtube-resource-list a > span:nth-child(2) { min-width: 0; display: grid; gap: 5px; }
+.youtube-resource-list strong { font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.youtube-resource-list small { color: var(--muted); font-size: 10px; }
+.youtube-open { color: var(--green); font-size: 14px; }
+.youtube-resource-list a:hover strong { color: var(--green); text-decoration: underline; }
+.recommendation-save-error { margin: 12px 0 0; color: #a04d3c; font-size: 11px; }
+
 @keyframes recommendation-spin { to { transform: rotate(360deg); } }
 
 .account-controls { min-width: 0; display: flex; align-items: center; gap: 10px; }
@@ -310,6 +369,7 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
   .site-nav { margin-left: 0; }
   .profile-page { width: min(100% - 48px, 700px); }
   .recommendations-page { width: min(100% - 48px, 700px); }
+  .skill-gap-page { width: min(100% - 48px, 700px); }
   .profile-load-state, .profile-migration { width: min(100% - 48px, 700px); }
   .profile-history { width: min(100% - 48px, 700px); padding-right: 10px; padding-left: 10px; }
   .profile-form { padding-right: 24px; padding-left: 24px; }
@@ -319,7 +379,7 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 @media (max-width: 620px) {
   .site-header, .site-footer, .hero { width: calc(100% - 40px); }
   .site-header { height: auto; min-height: 69px; padding: 11px 0; flex-wrap: wrap; gap: 10px; }
-  .site-nav { order: 3; width: 100%; gap: 13px; font-size: 11px; }
+  .site-nav { order: 3; width: 100%; flex-wrap: wrap; gap: 8px 13px; font-size: 11px; }
   .account-controls { order: 2; gap: 5px; margin-left: auto; }
   .account-email, .account-status { max-width: 90px; font-size: 10px; }
   .account-action { padding: 7px 8px; font-size: 10px; }
@@ -346,6 +406,17 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
   .footer-credit { display: none; }
   .profile-page { width: calc(100% - 32px); padding: 40px 0 48px; }
   .recommendations-page { width: calc(100% - 32px); padding: 40px 0 50px; }
+  .skill-gap-page { width: calc(100% - 32px); padding: 40px 0 50px; }
+  .skill-gap-intro { margin-bottom: 28px; }
+  .skill-gap-intro h1 { font-size: 35px; }
+  .skill-gap-intro > p:last-child { font-size: 12px; }
+  .skill-gap-columns { grid-template-columns: 1fr; gap: 20px; }
+  .skill-gap-career-heading h2 { font-size: 20px; }
+  .skill-resource { padding: 14px 12px; }
+  .skill-resource-heading { align-items: flex-start; flex-direction: column; }
+  .skill-resource-heading > .button { width: 100%; }
+  .youtube-resource-list a { grid-template-columns: 86px minmax(0, 1fr) 16px; gap: 8px; }
+  .youtube-resource-list img { width: 86px; }
   .recommendations-intro { margin-bottom: 28px; }
   .recommendations-intro h1 { font-size: 35px; }
   .recommendations-intro > p:last-child { font-size: 12px; }
