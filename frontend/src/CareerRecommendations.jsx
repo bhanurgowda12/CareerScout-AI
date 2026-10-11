@@ -1,0 +1,200 @@
+import React, { useEffect, useState } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { useCareerRecommendations } from './ai.js';
+import { auth, firestore } from './firebase.js';
+
+function canUseProfile(user) {
+  return Boolean(user?.uid && (
+    user.emailVerified
+    || user.providerData?.some((provider) => provider.providerId === 'google.com')
+  ));
+}
+
+function hasCareerProfileData(profile) {
+  return Boolean(
+    profile?.degree
+    || profile?.branch
+    || profile?.experienceLevel
+    || profile?.skills?.length
+    || profile?.interests?.length
+    || profile?.projects?.some((project) => project?.name || project?.description || project?.technologies)
+    || profile?.certifications?.some((certification) => certification?.name || certification?.issuer),
+  );
+}
+
+function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
+  const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileError, setProfileError] = useState('');
+  const [profileLoadAttempt, setProfileLoadAttempt] = useState(0);
+  const { recommendations, loading, error, requestRecommendations } = useCareerRecommendations();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSavedProfile() {
+      setProfile(null);
+      setProfileError('');
+      if (!canUseProfile(user) || auth?.currentUser?.uid !== user.uid || !firestore) {
+        setProfileLoading(false);
+        setProfileError('Sign in with a verified account to load your saved profile.');
+        return;
+      }
+
+      setProfileLoading(true);
+      try {
+        const snapshot = await getDoc(doc(firestore, 'users', user.uid, 'profile', 'profile'));
+        if (cancelled || auth.currentUser?.uid !== user.uid) return;
+        setProfile(snapshot.exists() ? snapshot.data() : null);
+      } catch {
+        if (!cancelled) {
+          setProfileError('Your saved profile could not be loaded. Check your connection and try again.');
+        }
+      } finally {
+        if (!cancelled) setProfileLoading(false);
+      }
+    }
+
+    loadSavedProfile();
+    return () => { cancelled = true; };
+  }, [user?.uid, profileLoadAttempt]);
+
+  function generateRecommendations() {
+    if (!profile || loading || auth?.currentUser?.uid !== user?.uid) return;
+    requestRecommendations(profile);
+  }
+
+  return (
+    <section className="recommendations-page" aria-labelledby="recommendations-title">
+      <div className="recommendations-intro">
+        <p className="eyebrow"><span className="eyebrow-dot" /> Your next direction</p>
+        <h1 id="recommendations-title">Career paths, <span>shaped around you.</span></h1>
+        <p>Explore practical directions based on the education, skills, interests, and work you have saved in your Student Profile.</p>
+      </div>
+
+      {!canUseProfile(user) ? (
+        <div className="recommendation-state" role="alert">
+          <p>Sign in with a verified account to get recommendations from your saved profile.</p>
+          <button className="button button-primary" type="button" onClick={onRequestSignIn}>Sign in</button>
+        </div>
+      ) : !firestore ? (
+        <div className="recommendation-state" role="alert">
+          <p>Firebase is not configured, so your saved profile cannot be loaded.</p>
+        </div>
+      ) : profileLoading ? (
+        <div className="recommendation-state" role="status">
+          <span className="recommendation-spinner" aria-hidden="true" />
+          <p>Loading your saved profile...</p>
+        </div>
+      ) : profileError ? (
+        <div className="recommendation-state" role="alert">
+          <p>{profileError}</p>
+          <button className="button button-secondary" type="button" onClick={() => setProfileLoadAttempt((attempt) => attempt + 1)}>
+            Reload profile
+          </button>
+        </div>
+      ) : !profile || !hasCareerProfileData(profile) ? (
+        <div className="recommendation-state recommendation-state--empty">
+          <span className="recommendation-state-mark" aria-hidden="true">↗</span>
+          <h2>Your profile is ready to guide the search.</h2>
+          <p>Save your degree, interests, or skills in Student Profile first. CareerScout will use that saved information, so there is nothing to enter again here.</p>
+          <button className="button button-primary" type="button" onClick={onOpenProfile}>Open Student Profile <span aria-hidden="true">↗</span></button>
+        </div>
+      ) : (
+        <>
+          <div className="recommendation-controls">
+            <div>
+              <strong>Using your saved Student Profile</strong>
+              <p>Your profile stays in your account; only career-relevant details are sent to Firebase AI Logic.</p>
+            </div>
+            <button className="button button-primary" type="button" onClick={generateRecommendations} disabled={loading}>
+              {loading ? <><span className="recommendation-spinner" aria-hidden="true" /> Building recommendations...</> : recommendations ? 'Generate again' : 'Generate recommendations'}
+            </button>
+          </div>
+
+          {loading && (
+            <div className="recommendation-loading" role="status" aria-live="polite">
+              <span className="recommendation-spinner" aria-hidden="true" />
+              <p>Comparing your profile with practical early-career paths...</p>
+            </div>
+          )}
+
+          {error && (
+            <div className="recommendation-error" role="alert">
+              <div><strong>Recommendations could not be generated.</strong><p>{error}</p></div>
+              <button className="button button-secondary" type="button" onClick={generateRecommendations} disabled={loading}>Retry</button>
+            </div>
+          )}
+
+          {recommendations && !loading && (
+            <>
+              <div className="recommendation-results-heading">
+                <div>
+                  <p className="eyebrow">A starting point, not a guarantee</p>
+                  <h2>{recommendations.careerRecommendations.length} paths to explore</h2>
+                </div>
+                <p>Fit scores are directional AI estimates, not predictions of hiring outcomes.</p>
+              </div>
+              <div className="career-recommendation-list">
+                {recommendations.careerRecommendations.map((career, index) => (
+                  <article className="career-recommendation" key={`${career.careerPath}-${index}`}>
+                    <header className="career-card-heading">
+                      <div>
+                        <span className="career-card-number">0{index + 1}</span>
+                        <h3>{career.careerPath}</h3>
+                      </div>
+                      <span className="career-fit" aria-label={`Directional profile fit ${career.compatibilityScore} out of 100`}>
+                        <strong>{career.compatibilityScore}</strong><span>profile fit</span>
+                      </span>
+                    </header>
+
+                    <p className="career-reasoning">{career.whyItSuits}</p>
+
+                    <div className="career-skill-grid">
+                      <section>
+                        <h4>Skills you can build on</h4>
+                        {career.relevantSkills.length ? (
+                          <ul className="recommendation-tags">{career.relevantSkills.map((skill) => <li key={skill}>{skill}</li>)}</ul>
+                        ) : <p className="recommendation-muted">Your profile does not list direct matches yet.</p>}
+                      </section>
+                      <section>
+                        <h4>Skills to develop</h4>
+                        <ul className="recommendation-tags recommendation-tags--gap">{career.missingSkills.map((skill) => <li key={skill}>{skill}</li>)}</ul>
+                      </section>
+                    </div>
+
+                    <div className="career-detail-grid">
+                      <section className="career-roadmap">
+                        <h4>Learning roadmap</h4>
+                        <ol>
+                          {career.learningRoadmap.map((phase, phaseIndex) => (
+                            <li key={`${phase.phase}-${phaseIndex}`}>
+                              <div className="roadmap-phase-heading"><strong>{phase.phase}</strong><span>{phase.timeframe}</span></div>
+                              <ul>{phase.actions.map((action, actionIndex) => <li key={`${action}-${actionIndex}`}>{action}</li>)}</ul>
+                            </li>
+                          ))}
+                        </ol>
+                      </section>
+                      <section className="career-next-steps">
+                        <div>
+                          <h4>Portfolio project</h4>
+                          <p>{career.suggestedPortfolioProject}</p>
+                        </div>
+                        <div>
+                          <h4>Suggested next steps</h4>
+                          <ol>{career.nextSteps.map((step, stepIndex) => <li key={`${step}-${stepIndex}`}>{step}</li>)}</ol>
+                        </div>
+                      </section>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+export default CareerRecommendations;

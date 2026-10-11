@@ -3,6 +3,7 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import AuthPanel from './AuthPanel.jsx';
 import { auth } from './firebase.js';
 import StudentProfile from './StudentProfile.jsx';
+import CareerRecommendations from './CareerRecommendations.jsx';
 
 const highlights = [
   {
@@ -110,6 +111,19 @@ function App() {
     }
   }
 
+  function openProtectedPage(page, label) {
+    if (hasVerifiedAccess(authUser)) {
+      setAuthNotice('');
+      setCurrentPage(page);
+    } else {
+      setCurrentPage('auth');
+      setAuthNotice(authUser
+        ? `Verify your email before opening ${label}.`
+        : `Sign in and verify your email to open ${label}.`);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   return (
     <main>
       <header className="site-header">
@@ -129,22 +143,13 @@ function App() {
           <a
             href="#student-profile"
             aria-current={currentPage === 'profile' ? 'page' : undefined}
-            onClick={(event) => {
-              event.preventDefault();
-              if (hasVerifiedAccess(authUser)) {
-                setAuthNotice('');
-                setCurrentPage('profile');
-              } else {
-                setCurrentPage('auth');
-                setAuthNotice(authUser
-                  ? 'Verify your email before opening your Student Profile.'
-                  : 'Sign in or create an account, then verify your email to open your Student Profile.');
-              }
-              window.scrollTo({ top: 0, behavior: 'smooth' });
-            }}
-          >
-            Student Profile
-          </a>
+            onClick={(event) => { event.preventDefault(); openProtectedPage('profile', 'your Student Profile'); }}
+          >Student Profile</a>
+          <a
+            href="#career-recommendations"
+            aria-current={currentPage === 'recommendations' ? 'page' : undefined}
+            onClick={(event) => { event.preventDefault(); openProtectedPage('recommendations', 'Career Recommendations'); }}
+          >Career Recommendations</a>
         </nav>
         <div className="account-controls">
           {!authReady ? (
@@ -172,7 +177,7 @@ function App() {
         <a
           className="nav-cta"
           href={currentPage === 'home' ? '#explore' : '#top'}
-          onClick={currentPage === 'profile' ? () => setCurrentPage('home') : undefined}
+          onClick={currentPage !== 'home' ? () => setCurrentPage('home') : undefined}
         >
           {currentPage === 'home' ? 'Find your direction' : 'Back to CareerScout'} <span aria-hidden="true">↗</span>
         </a>
@@ -182,7 +187,15 @@ function App() {
 
       {currentPage === 'profile' && hasVerifiedAccess(authUser) ? (
         <StudentProfile user={authUser} onRequestSignIn={() => setCurrentPage('auth')} />
+      ) : currentPage === 'recommendations' && hasVerifiedAccess(authUser) ? (
+        <CareerRecommendations
+          user={authUser}
+          onOpenProfile={() => setCurrentPage('profile')}
+          onRequestSignIn={() => setCurrentPage('auth')}
+        />
       ) : currentPage === 'auth' || currentPage === 'profile' ? (
+        <AuthPanel user={authUser} onAuthenticated={handleAuthenticated} />
+      ) : currentPage === 'recommendations' ? (
         <AuthPanel user={authUser} onAuthenticated={handleAuthenticated} />
       ) : <>
       <section className="hero" id="top">

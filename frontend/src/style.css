@@ -203,6 +203,66 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .history-details dd p { margin: 3px 0 0; color: var(--muted); white-space: pre-wrap; }
 .history-preview > .button { cursor: pointer; }
 
+.recommendations-page { width: min(1060px, calc(100% - 96px)); margin: 0 auto; padding: 62px 0 78px; }
+.recommendations-intro { max-width: 700px; margin: 0 auto 38px; text-align: center; }
+.recommendations-intro .eyebrow { margin-bottom: 13px; }
+.recommendations-intro h1 { margin: 0 0 13px; font-size: 43px; }
+.recommendations-intro > p:last-child { max-width: 590px; margin: 0 auto; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.recommendation-state { min-height: 150px; padding: 27px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 11px; border: 1px solid var(--line); border-radius: 4px; background: rgb(255 255 255 / 65%); text-align: center; }
+.recommendation-state p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.recommendation-state .button { cursor: pointer; }
+.recommendation-state--empty { min-height: 280px; padding: 40px; }
+.recommendation-state--empty h2 { margin: 2px 0 0; font-size: 23px; }
+.recommendation-state--empty p { max-width: 510px; }
+.recommendation-state-mark { width: 39px; height: 39px; display: grid; place-items: center; border-radius: 50%; background: #e9eddf; color: var(--green); font-size: 18px; }
+.recommendation-controls { padding: 20px 0; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.recommendation-controls > div { min-width: 0; }
+.recommendation-controls strong { color: var(--ink); font-size: 12px; }
+.recommendation-controls p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.recommendation-controls .button { flex: 0 0 auto; border: 0; cursor: pointer; }
+.recommendation-controls .button:disabled, .recommendation-error .button:disabled { cursor: wait; opacity: 0.65; }
+.recommendation-loading { min-height: 140px; display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--muted); }
+.recommendation-loading p { margin: 0; font-size: 12px; }
+.recommendation-spinner { width: 16px; height: 16px; display: inline-block; flex: 0 0 16px; border: 2px solid #d4dfcf; border-top-color: var(--green); border-radius: 50%; animation: recommendation-spin 700ms linear infinite; }
+.recommendation-error { margin-top: 22px; padding: 16px 18px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-left: 3px solid #c66b58; background: #f8ece8; color: #8f4638; }
+.recommendation-error strong { font-size: 12px; }
+.recommendation-error p { margin: 5px 0 0; font-size: 11px; line-height: 1.5; }
+.recommendation-error .button { min-height: 39px; flex: 0 0 auto; background: #fff; cursor: pointer; }
+.recommendation-results-heading { margin: 37px 0 15px; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
+.recommendation-results-heading .eyebrow { margin: 0 0 7px; }
+.recommendation-results-heading h2 { font-size: 24px; }
+.recommendation-results-heading > p { max-width: 300px; margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; text-align: right; }
+.career-recommendation-list { display: grid; gap: 17px; }
+.career-recommendation { padding: 24px 26px 27px; border: 1px solid var(--line); border-radius: 4px; background: rgb(255 255 255 / 68%); animation: arrive 430ms ease both; }
+.career-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding-bottom: 17px; border-bottom: 1px solid var(--line); }
+.career-card-heading > div { min-width: 0; display: flex; align-items: baseline; gap: 12px; }
+.career-card-number { color: #7c9664; font-size: 10px; font-weight: 700; }
+.career-card-heading h3 { margin: 0; font: 700 20px/1.3 'Manrope', sans-serif; overflow-wrap: anywhere; }
+.career-fit { min-width: 82px; display: flex; flex-direction: column; align-items: flex-end; color: var(--muted); }
+.career-fit strong { color: var(--green); font: 700 20px 'Manrope', sans-serif; }
+.career-fit span { font-size: 9px; }
+.career-reasoning { max-width: 820px; margin: 17px 0 22px; color: #59635d; font-size: 12px; line-height: 1.7; }
+.career-skill-grid, .career-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 23px; }
+.career-skill-grid { padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+.career-recommendation h4 { margin: 0 0 11px; color: #46534a; font-size: 11px; font-weight: 700; }
+.recommendation-tags { margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 7px; list-style: none; }
+.recommendation-tags li { padding: 6px 8px; border: 1px solid #d9e0d4; border-radius: 3px; background: #f1f4eb; color: #53644e; font-size: 10px; overflow-wrap: anywhere; }
+.recommendation-tags--gap li { border-color: #eadcc9; background: #f8f1e8; color: #795b36; }
+.recommendation-muted { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.career-detail-grid { padding-top: 22px; }
+.career-roadmap ol, .career-next-steps ol { margin: 0; padding-left: 18px; color: #59635d; font-size: 10px; line-height: 1.65; }
+.career-roadmap > ol { display: grid; gap: 13px; }
+.career-roadmap > ol > li { padding-left: 3px; }
+.roadmap-phase-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px 12px; color: var(--ink); }
+.roadmap-phase-heading strong { font-size: 10px; }
+.roadmap-phase-heading span { color: #788079; font-size: 9px; }
+.career-roadmap ul { margin: 5px 0 0; padding-left: 16px; }
+.career-next-steps { display: grid; align-content: start; gap: 21px; }
+.career-next-steps p { margin: 0; color: #59635d; font-size: 10px; line-height: 1.65; }
+.career-next-steps ol { display: grid; gap: 5px; }
+
+@keyframes recommendation-spin { to { transform: rotate(360deg); } }
+
 .account-controls { min-width: 0; display: flex; align-items: center; gap: 10px; }
 .account-email, .account-status { max-width: 190px; overflow: hidden; color: #59635d; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .account-action, .auth-nav-link { padding: 8px 10px; border: 1px solid #cbd2c9; border-radius: 4px; background: transparent; color: var(--green); cursor: pointer; font: 600 11px 'DM Sans', sans-serif; white-space: nowrap; }
@@ -249,6 +309,7 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
   .explore-section { padding-right: 24px; padding-left: 24px; }
   .site-nav { margin-left: 0; }
   .profile-page { width: min(100% - 48px, 700px); }
+  .recommendations-page { width: min(100% - 48px, 700px); }
   .profile-load-state, .profile-migration { width: min(100% - 48px, 700px); }
   .profile-history { width: min(100% - 48px, 700px); padding-right: 10px; padding-left: 10px; }
   .profile-form { padding-right: 24px; padding-left: 24px; }
@@ -284,6 +345,20 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
   .site-footer p { order: 1; width: 100%; }
   .footer-credit { display: none; }
   .profile-page { width: calc(100% - 32px); padding: 40px 0 48px; }
+  .recommendations-page { width: calc(100% - 32px); padding: 40px 0 50px; }
+  .recommendations-intro { margin-bottom: 28px; }
+  .recommendations-intro h1 { font-size: 35px; }
+  .recommendations-intro > p:last-child { font-size: 12px; }
+  .recommendation-controls, .recommendation-results-heading { align-items: stretch; flex-direction: column; }
+  .recommendation-controls .button { width: 100%; }
+  .recommendation-results-heading > p { max-width: none; text-align: left; }
+  .career-recommendation { padding: 18px 16px 20px; }
+  .career-card-heading h3 { font-size: 17px; }
+  .career-skill-grid, .career-detail-grid { grid-template-columns: 1fr; gap: 19px; }
+  .recommendation-error { align-items: flex-start; flex-direction: column; }
+  .recommendation-error .button { width: 100%; }
+  .recommendation-state--empty { padding: 26px 17px; }
+  .recommendation-state--empty h2 { font-size: 20px; }
   .profile-load-state, .profile-migration { width: calc(100% - 32px); padding: 17px; }
   .profile-history { width: calc(100% - 32px); padding: 20px 0; }
   .profile-intro { margin-bottom: 28px; }
