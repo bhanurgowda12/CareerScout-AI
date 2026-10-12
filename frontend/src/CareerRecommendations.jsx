@@ -95,6 +95,7 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
     try {
       await addDoc(collection(firestore, 'users', user.uid, 'careerRecommendations'), {
         careerRecommendations: generated.careerRecommendations,
+        generationMethod: generated.generationMethod || 'gemini',
         generatedAt: serverTimestamp(),
       });
     } catch (error) {
@@ -169,12 +170,20 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
 
           {recommendations && !loading && (
             <>
+              {recommendations.generationMethod === 'rule-based' && (
+                <aside className="recommendation-source-notice">
+                  <strong>Rule-based suggestions</strong>
+                  <p>Match scores are estimates based on your saved skills and interests, not AI assessments or hiring probabilities.</p>
+                </aside>
+              )}
               <div className="recommendation-results-heading">
                 <div>
                   <p className="eyebrow">A starting point, not a guarantee</p>
                   <h2>{recommendations.careerRecommendations.length} paths to explore</h2>
                 </div>
-                <p>Fit scores are directional AI estimates, not predictions of hiring outcomes.</p>
+                <p>{recommendations.generationMethod === 'rule-based'
+                  ? 'Match scores are estimates based on your saved profile.'
+                  : 'Fit scores are directional AI estimates, not predictions of hiring outcomes.'}</p>
               </div>
               <div className="career-recommendation-list">
                 {recommendations.careerRecommendations.map((career, index) => (

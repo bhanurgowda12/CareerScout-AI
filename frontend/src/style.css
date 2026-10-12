@@ -228,6 +228,9 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .recommendation-error strong { font-size: 12px; }
 .recommendation-error p { margin: 5px 0 0; font-size: 11px; line-height: 1.5; }
 .recommendation-error .button { min-height: 39px; flex: 0 0 auto; background: #fff; cursor: pointer; }
+.recommendation-source-notice { margin: 18px 0; padding: 13px 16px; border-left: 3px solid #71845a; background: #eef2e8; color: #40513b; }
+.recommendation-source-notice strong { font-size: 12px; }
+.recommendation-source-notice p { margin: 5px 0 0; color: #59635d; font-size: 11px; line-height: 1.55; }
 .recommendation-results-heading { margin: 37px 0 15px; display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
 .recommendation-results-heading .eyebrow { margin: 0 0 7px; }
 .recommendation-results-heading h2 { font-size: 24px; }

@@ -63,6 +63,45 @@ const recommendationSchema = {
   additionalProperties: false,
 };
 
+const RULE_BASED_CAREER_CATALOG = [
+  {
+    careerPath: 'Frontend Developer',
+    suggestedSkills: ['HTML', 'CSS', 'JavaScript', 'TypeScript', 'React', 'Accessibility'],
+    suggestedInterests: ['Web development', 'Frontend development', 'UI design', 'User experience', 'Accessibility'],
+    suggestedPortfolioProject: 'Project idea: Build a responsive website with an accessible interactive feature.',
+  },
+  {
+    careerPath: 'Backend Developer',
+    suggestedSkills: ['JavaScript', 'Node.js', 'Python', 'APIs', 'SQL', 'Databases'],
+    suggestedInterests: ['Backend development', 'API design', 'Databases', 'Server-side systems', 'Security'],
+    suggestedPortfolioProject: 'Project idea: Build a small API with documented endpoints and persistent sample data.',
+  },
+  {
+    careerPath: 'Full-Stack Developer',
+    suggestedSkills: ['HTML', 'CSS', 'JavaScript', 'React', 'Node.js', 'SQL'],
+    suggestedInterests: ['Web development', 'Frontend development', 'Backend development', 'Full-stack development'],
+    suggestedPortfolioProject: 'Project idea: Build a small web app with a user interface and a data-backed API.',
+  },
+  {
+    careerPath: 'Python Developer',
+    suggestedSkills: ['Python', 'Git', 'APIs', 'SQL', 'Testing', 'Automation'],
+    suggestedInterests: ['Python', 'Automation', 'Scripting', 'Backend development', 'Developer tools'],
+    suggestedPortfolioProject: 'Project idea: Create a Python tool that automates a useful, repeatable task.',
+  },
+  {
+    careerPath: 'Data Analyst',
+    suggestedSkills: ['SQL', 'Python', 'Spreadsheets', 'Statistics', 'Data visualization'],
+    suggestedInterests: ['Data analysis', 'Analytics', 'Statistics', 'Business intelligence', 'Research', 'Patterns'],
+    suggestedPortfolioProject: 'Project idea: Analyze a public dataset and present the findings in a clear dashboard.',
+  },
+  {
+    careerPath: 'Machine Learning Engineer',
+    suggestedSkills: ['Python', 'Statistics', 'Machine learning', 'Data processing', 'Git'],
+    suggestedInterests: ['Machine learning', 'Artificial intelligence', 'AI', 'Data science', 'Statistics', 'Research'],
+    suggestedPortfolioProject: 'Project idea: Build a small machine-learning demo using a public dataset and explain its limits.',
+  },
+];
+
 const generativeModel = firebaseApp
   ? getGenerativeModel(
     getAI(firebaseApp, { backend: new GoogleAIBackend() }),
@@ -89,6 +128,17 @@ function safeDiagnosticCode(value) {
     : undefined;
 }
 
+function safeDiagnosticMessage(value) {
+  if (typeof value !== 'string') return undefined;
+  const message = value
+    .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, '[redacted]')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[redacted]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim();
+  return message ? message.slice(0, 240) : undefined;
+}
+
 function reportRecommendationFailure(error, categoryOverride) {
   const source = error?.cause || error;
   const customErrorData = source?.customErrorData || source?.customData || {};
@@ -96,13 +146,32 @@ function reportRecommendationFailure(error, categoryOverride) {
   const serviceErrorCode = errorDetails
     .map((detail) => detail?.reason || detail?.code)
     .find((code) => typeof code === 'string');
-  const responseErrorCode = customErrorData.response?.error?.code;
-  const status = Number(customErrorData.status || source?.status);
+  const providerResponseError = customErrorData.response?.error || customErrorData.error;
+  const responseErrorCode = providerResponseError?.code;
+  const status = Number(
+    customErrorData.response?.status
+      || customErrorData.status
+      || source?.status,
+  );
   const httpStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
-  const searchableText = [error?.message, source?.message, ...errorDetails.map((detail) => detail?.reason)]
+  const providerErrorMessage = safeDiagnosticMessage(providerResponseError?.message);
+  const searchableText = [
+    error?.message,
+    source?.message,
+    providerErrorMessage,
+    responseErrorCode,
+    serviceErrorCode,
+    customErrorData.error?.type,
+    ...errorDetails.flatMap((detail) => [detail?.reason, detail?.code, detail?.message]),
+  ]
     .filter((value) => typeof value === 'string')
     .join(' ')
     .toLowerCase();
+  const isTemporarilyUnavailable = httpStatus === 500
+    || httpStatus === 503
+    || /temporar(?:y|ily) unavailable|service unavailable|unavailable|overload|high demand|prefill[ _-]*queue|preempted/.test(searchableText);
+  const isRateLimitOrQuota = httpStatus === 429
+    || /rate[ -]?limit|quota|resource\.exhausted/.test(searchableText);
   const firebaseErrorCode = safeDiagnosticCode(source?.code || error?.code);
   const category = categoryOverride
     || (/app.?check|attest/.test(searchableText)
@@ -111,25 +180,29 @@ function reportRecommendationFailure(error, categoryOverride) {
         ? 'authentication'
         : httpStatus === 403
           ? 'permission-denied'
-          : httpStatus === 429 || /quota|resource.exhausted|billing/.test(searchableText)
-            ? 'quota-or-billing'
+          : isRateLimitOrQuota
+            ? 'rate-limit-or-quota'
+            : /billing/.test(searchableText)
+              ? 'quota-or-billing'
             : firebaseErrorCode === 'api-not-enabled'
               ? 'firebase-ai-logic-disabled'
-              : /timeout|taking too long/.test(searchableText)
-                ? 'timeout'
-                : /malformed json|invalid recommendations|unexpected format|parse-failed/.test(searchableText)
-                  ? 'invalid-ai-response'
-                  : httpStatus >= 500
-                    ? 'service-error'
+              : isTemporarilyUnavailable
+                ? 'temporary-unavailability'
+                : /timeout|taking|took too long/.test(searchableText)
+                  ? 'timeout'
+                  : /malformed json|invalid recommendations|unexpected format|parse-failed/.test(searchableText)
+                    ? 'invalid-ai-response'
                     : 'request-error');
 
   console.error('[CareerScout AI] Recommendation request failed', {
     category,
     httpStatus,
+    providerErrorMessage,
     firebaseErrorCode,
     serviceErrorCode: safeDiagnosticCode(serviceErrorCode),
     geminiErrorCode: safeDiagnosticCode(responseErrorCode),
   });
+  return category;
 }
 
 function normalizeStudentProfile(profile) {
@@ -175,7 +248,7 @@ function isStringArray(value) {
 
 function validateRecommendations(value) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.careerRecommendations)) {
-    throw new CareerRecommendationError('Gemini returned recommendations in an unexpected format. Please try again.');
+    throw new CareerRecommendationError('Recommendations were returned in an unexpected format. Please try again.');
   }
 
   const validRecommendations = value.careerRecommendations.every((recommendation) => (
@@ -226,10 +299,95 @@ function validateRecommendations(value) {
     || new Set(careerTitles).size !== careerTitles.length
     || !validRecommendations
   ) {
-    throw new CareerRecommendationError('Gemini returned incomplete or invalid recommendations. Please try again.');
+    throw new CareerRecommendationError('Recommendations were incomplete or invalid. Please try again.');
   }
 
   return value;
+}
+
+function normalizeMatchTerm(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function getProfileTerms(values) {
+  if (!Array.isArray(values)) return [];
+  const terms = new Map();
+  for (const value of values) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const normalized = normalizeMatchTerm(value.trim());
+    if (normalized && !terms.has(normalized)) terms.set(normalized, value.trim());
+  }
+  return [...terms.values()];
+}
+
+function createRuleBasedRecommendations(profile) {
+  const savedSkills = getProfileTerms(profile.skills);
+  const savedInterests = getProfileTerms(profile.interests);
+
+  const rankedPaths = RULE_BASED_CAREER_CATALOG.map((career) => {
+    const suggestedSkills = new Set(career.suggestedSkills.map(normalizeMatchTerm));
+    const suggestedInterests = new Set(career.suggestedInterests.map(normalizeMatchTerm));
+    const relevantSkills = savedSkills.filter((skill) => suggestedSkills.has(normalizeMatchTerm(skill)));
+    const relevantInterests = savedInterests.filter((interest) => suggestedInterests.has(normalizeMatchTerm(interest)));
+    const categoryScores = [];
+    if (savedSkills.length) categoryScores.push(relevantSkills.length / savedSkills.length);
+    if (savedInterests.length) categoryScores.push(relevantInterests.length / savedInterests.length);
+    const compatibilityScore = categoryScores.length
+      ? Math.round((categoryScores.reduce((total, score) => total + score, 0) / categoryScores.length) * 100)
+      : 0;
+    const savedSkillSet = new Set(savedSkills.map(normalizeMatchTerm));
+    const missingSkills = career.suggestedSkills.filter((skill) => !savedSkillSet.has(normalizeMatchTerm(skill)));
+    const evidence = [];
+    if (relevantSkills.length) evidence.push(`saved skills such as ${relevantSkills.slice(0, 3).join(', ')}`);
+    if (relevantInterests.length) evidence.push(`saved interests such as ${relevantInterests.slice(0, 3).join(', ')}`);
+
+    return {
+      careerPath: career.careerPath,
+      compatibilityScore,
+      whyItSuits: evidence.length
+        ? `This rule-based match overlaps with your ${evidence.join(' and ')}.`
+        : savedSkills.length || savedInterests.length
+          ? 'Your saved skills and interests do not directly match this path yet, so treat it as a general option to explore.'
+          : 'No saved skills or interests are available to score this path, so treat it as a general option to explore.',
+      relevantSkills,
+      missingSkills,
+      skillLearningPlan: missingSkills.map((skill, index) => ({
+        skill,
+        priority: index < 2 ? 'Beginner' : 'Intermediate',
+        sequenceOrder: index + 1,
+      })),
+      learningRoadmap: [
+        {
+          phase: 'Learn the foundations',
+          timeframe: 'Start here',
+          actions: [
+            missingSkills.length ? `Choose one topic to begin with: ${missingSkills[0]}.` : 'Review the skills suggested for this path.',
+            'Use a beginner learning resource and practice with a small example.',
+          ],
+        },
+        {
+          phase: 'Build and reflect',
+          timeframe: 'After the basics',
+          actions: [career.suggestedPortfolioProject, 'Write down what you learned and what you would improve next.'],
+        },
+      ],
+      suggestedPortfolioProject: career.suggestedPortfolioProject,
+      nextSteps: [
+        missingSkills.length ? `Explore ${missingSkills[0]} as a possible next learning topic.` : 'Choose a small project that helps you explore this path.',
+        'Compare this option with your interests and update your saved profile as it changes.',
+      ],
+    };
+  });
+
+  rankedPaths.sort((first, second) => (
+    second.compatibilityScore - first.compatibilityScore
+    || first.careerPath.localeCompare(second.careerPath)
+  ));
+
+  return {
+    ...validateRecommendations({ careerRecommendations: rankedPaths.slice(0, 5) }),
+    generationMethod: 'rule-based',
+  };
 }
 
 let activeGeneration = null;
@@ -289,7 +447,7 @@ export async function generateCareerRecommendations(studentProfile) {
       request,
       new Promise((_, reject) => {
         timeoutId = window.setTimeout(() => reject(new CareerRecommendationError(
-          'The AI service is taking too long to respond. Please wait briefly and retry.',
+          'The AI request took too long to respond. The service may be busy; please wait briefly and try again.',
         )), 45000);
       }),
     ]);
@@ -305,9 +463,19 @@ export async function generateCareerRecommendations(studentProfile) {
       );
     }
 
-    return validateRecommendations(parsedResponse);
+    return {
+      ...validateRecommendations(parsedResponse),
+      generationMethod: 'gemini',
+    };
   } catch (error) {
-    reportRecommendationFailure(error);
+    const failureCategory = reportRecommendationFailure(error);
+    if (
+      failureCategory === 'temporary-unavailability'
+      || failureCategory === 'timeout'
+      || failureCategory === 'rate-limit-or-quota'
+    ) {
+      return createRuleBasedRecommendations(profile);
+    }
     if (error instanceof CareerRecommendationError) throw error;
     throw new CareerRecommendationError(
       'Career recommendations are unavailable right now. Check your connection and Firebase AI Logic setup, then retry.',

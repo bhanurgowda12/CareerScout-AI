@@ -15,6 +15,15 @@ import { auth, firestore } from './firebase.js';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
+async function requestLearningResources(skill, idToken) {
+  const response = await fetch(
+    `${API_BASE_URL}/api/learning-resources?skill=${encodeURIComponent(skill)}`,
+    { headers: { Authorization: `Bearer ${idToken}` } },
+  );
+  const result = await response.json().catch(() => ({}));
+  return { response, result };
+}
+
 function canUseProfile(user) {
   return Boolean(user?.uid && (
     user.emailVerified
@@ -145,22 +154,92 @@ function SkillGapLearning({ user, onRequestSignIn }) {
   }, [selectedRecord?.id, selectedCareerPath, user?.uid]);
 
   async function loadResources(skill) {
-    if (resourcesBySkill[skill]?.status || !user || auth?.currentUser?.uid !== user.uid) return;
+    if (resourcesBySkill[skill]?.status) return;
+    const currentUser = auth?.currentUser;
+    if (!currentUser) {
+      setResourcesBySkill((current) => ({
+        ...current,
+        [skill]: { status: 'error', message: 'Sign in again to load learning resources.', videos: [] },
+      }));
+      return;
+    }
+    if (currentUser.uid !== user?.uid) {
+      setResourcesBySkill((current) => ({
+        ...current,
+        [skill]: { status: 'error', message: 'Your sign-in changed. Reload the page and try again.', videos: [] },
+      }));
+      return;
+    }
     setResourcesBySkill((current) => ({ ...current, [skill]: { status: 'loading', videos: [] } }));
 
     try {
-      const idToken = await user.getIdToken();
-      const response = await fetch(
-        `${API_BASE_URL}/api/learning-resources?skill=${encodeURIComponent(skill)}`,
-        { headers: { Authorization: `Bearer ${idToken}` } },
-      );
-      const result = await response.json().catch(() => ({}));
+      let idToken;
+      try {
+        idToken = await currentUser.getIdToken(true);
+      } catch {
+        setResourcesBySkill((current) => ({
+          ...current,
+          [skill]: { status: 'error', message: 'Your sign-in could not be verified. Sign in again, then retry.', videos: [] },
+        }));
+        return;
+      }
+      if (auth?.currentUser?.uid !== currentUser.uid) {
+        setResourcesBySkill((current) => ({
+          ...current,
+          [skill]: { status: 'error', message: 'Your sign-in changed. Reload the page and try again.', videos: [] },
+        }));
+        return;
+      }
+      let { response, result } = await requestLearningResources(skill, idToken);
+      if (response.status === 401 && result.detail?.code === 'firebase-token-expired') {
+        if (auth?.currentUser?.uid !== currentUser.uid) {
+          setResourcesBySkill((current) => ({
+            ...current,
+            [skill]: { status: 'error', message: 'Your sign-in changed. Reload the page and try again.', videos: [] },
+          }));
+          return;
+        }
+        try {
+          idToken = await currentUser.getIdToken(true);
+        } catch {
+          setResourcesBySkill((current) => ({
+            ...current,
+            [skill]: { status: 'error', message: 'Your sign-in could not be refreshed. Sign in again, then retry.', videos: [] },
+          }));
+          return;
+        }
+        if (auth?.currentUser?.uid !== currentUser.uid) {
+          setResourcesBySkill((current) => ({
+            ...current,
+            [skill]: { status: 'error', message: 'Your sign-in changed. Reload the page and try again.', videos: [] },
+          }));
+          return;
+        }
+        ({ response, result } = await requestLearningResources(skill, idToken));
+      }
+
       if (!response.ok) {
-        const message = response.status === 503 && result.detail?.includes('not configured')
+        const detailCode = typeof result.detail === 'object' ? result.detail?.code : undefined;
+        const detailMessage = typeof result.detail === 'string' ? result.detail : result.detail?.message;
+        const message = response.status === 401
+          ? detailCode === 'firebase-sign-in-required'
+            ? 'Sign in to load learning resources.'
+            : detailCode === 'firebase-token-expired'
+              ? 'Your Firebase sign-in has expired. Sign in again, then retry.'
+              : detailCode === 'firebase-token-revoked'
+                ? 'This Firebase sign-in is no longer valid. Sign in again, then retry.'
+                : detailCode === 'firebase-token-project-mismatch'
+                  ? 'The sign-in token belongs to a different Firebase project. Confirm the frontend and backend use the same Firebase project.'
+                  : detailCode === 'firebase-token-issuer-mismatch'
+                    ? 'The sign-in token issuer does not match the backend Firebase project. Check the Firebase project configuration.'
+                    : detailCode === 'firebase-token-signature-invalid'
+                      ? 'Firebase could not validate this token signature. Check the Firebase project and token configuration.'
+                      : 'Firebase could not verify this token. Check that the frontend and backend use the same Firebase project; your session has not been assumed to be expired.'
+          : response.status === 503 && detailCode?.startsWith('firebase-')
+            ? detailMessage || 'Firebase token verification is unavailable. Please retry shortly.'
+            : response.status === 503 && detailMessage?.includes('not configured')
           ? 'YouTube learning resources are not configured. Set YOUTUBE_API_KEY for the backend and restart it.'
-          : response.status === 401
-            ? 'Your sign-in expired. Sign in again and retry.'
-            : result.detail || 'YouTube learning resources could not be loaded. Please retry.';
+          : detailMessage || 'YouTube learning resources could not be loaded. Please retry.';
         setResourcesBySkill((current) => ({ ...current, [skill]: { status: 'error', message, videos: [] } }));
         return;
       }
@@ -262,6 +341,13 @@ function SkillGapLearning({ user, onRequestSignIn }) {
                 {careers.map((career) => <option key={career.careerPath} value={career.careerPath}>{career.careerPath}</option>)}
               </select>
             </div>
+          )}
+
+          {selectedRecord?.generationMethod === 'rule-based' && (
+            <aside className="recommendation-source-notice">
+              <strong>Rule-based suggestions</strong>
+              <p>Match scores are estimates based on the saved profile, not AI assessments or hiring probabilities.</p>
+            </aside>
           )}
 
           {selectedRecord && (() => {
