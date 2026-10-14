@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection,
   deleteDoc,
@@ -14,14 +14,35 @@ import {
 import { auth, firestore } from './firebase.js';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const LEARNING_LANGUAGES = [
+  { code: 'en', label: 'English' },
+  { code: 'kn', label: 'Kannada (ಕನ್ನಡ)' },
+  { code: 'hi', label: 'Hindi (हिन्दी)' },
+  { code: 'te', label: 'Telugu (తెలుగు)' },
+  { code: 'ta', label: 'Tamil (தமிழ்)' },
+  { code: 'ml', label: 'Malayalam (മലയാളം)' },
+  { code: 'mr', label: 'Marathi (मराठी)' },
+  { code: 'bn', label: 'Bengali (বাংলা)' },
+];
 
-async function requestLearningResources(skill, idToken) {
+async function requestLearningResources(skill, language, idToken, pageToken) {
+  const parameters = new URLSearchParams({ skill, language });
+  if (pageToken) parameters.set('pageToken', pageToken);
   const response = await fetch(
-    `${API_BASE_URL}/api/learning-resources?skill=${encodeURIComponent(skill)}`,
+    `${API_BASE_URL}/api/learning-resources?${parameters.toString()}`,
     { headers: { Authorization: `Bearer ${idToken}` } },
   );
   const result = await response.json().catch(() => ({}));
   return { response, result };
+}
+
+function getSkillsToLearn(career) {
+  const skillPlan = Array.isArray(career?.skillLearningPlan)
+    ? [...career.skillLearningPlan].sort((first, second) => first.sequenceOrder - second.sequenceOrder)
+    : [];
+  return skillPlan.length
+    ? skillPlan
+    : (career?.missingSkills || []).map((skill, index) => ({ skill, sequenceOrder: index + 1 }));
 }
 
 function canUseProfile(user) {
@@ -77,6 +98,10 @@ function SkillGapLearning({ user, onRequestSignIn }) {
   const [progressError, setProgressError] = useState('');
   const [savingSkill, setSavingSkill] = useState('');
   const [resourcesBySkill, setResourcesBySkill] = useState({});
+  const [selectedLanguages, setSelectedLanguages] = useState([]);
+  const [submittedLanguages, setSubmittedLanguages] = useState(null);
+  const [languageError, setLanguageError] = useState('');
+  const searchGeneration = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,107 +178,138 @@ function SkillGapLearning({ user, onRequestSignIn }) {
     return () => { cancelled = true; };
   }, [selectedRecord?.id, selectedCareerPath, user?.uid]);
 
-  async function loadResources(skill) {
-    if (resourcesBySkill[skill]?.status) return;
-    const currentUser = auth?.currentUser;
-    if (!currentUser) {
-      setResourcesBySkill((current) => ({
+  function updateResource(skill, language, update) {
+    setResourcesBySkill((current) => {
+      const currentSkillResources = current[skill] || {};
+      const previous = currentSkillResources[language];
+      return {
         ...current,
-        [skill]: { status: 'error', message: 'Sign in again to load learning resources.', videos: [] },
-      }));
-      return;
+        [skill]: {
+          ...currentSkillResources,
+          [language]: typeof update === 'function' ? update(previous) : update,
+        },
+      };
+    });
+  }
+
+  function getResourceErrorMessage(response, result) {
+    const detailCode = typeof result.detail === 'object' ? result.detail?.code : undefined;
+    const detailMessage = typeof result.detail === 'string' ? result.detail : result.detail?.message;
+    if (response.status === 401) {
+      if (detailCode === 'firebase-sign-in-required') return 'Sign in to load learning resources.';
+      if (detailCode === 'firebase-token-expired') return 'Your Firebase sign-in has expired. Sign in again, then retry.';
+      if (detailCode === 'firebase-token-revoked') return 'This Firebase sign-in is no longer valid. Sign in again, then retry.';
+      if (detailCode === 'firebase-token-project-mismatch') return 'The sign-in token belongs to a different Firebase project. Confirm the frontend and backend use the same Firebase project.';
+      if (detailCode === 'firebase-token-issuer-mismatch') return 'The sign-in token issuer does not match the backend Firebase project. Check the Firebase project configuration.';
+      if (detailCode === 'firebase-token-signature-invalid') return 'Firebase could not validate this token signature. Check the Firebase project and token configuration.';
+      return 'Firebase could not verify this token. Check that the frontend and backend use the same Firebase project; your session has not been assumed to be expired.';
     }
-    if (currentUser.uid !== user?.uid) {
-      setResourcesBySkill((current) => ({
-        ...current,
-        [skill]: { status: 'error', message: 'Your sign-in changed. Reload the page and try again.', videos: [] },
-      }));
-      return;
+    if (response.status === 503 && detailCode?.startsWith('firebase-')) {
+      return detailMessage || 'Firebase token verification is unavailable. Please retry shortly.';
     }
-    setResourcesBySkill((current) => ({ ...current, [skill]: { status: 'loading', videos: [] } }));
+    if (response.status === 503 && detailMessage?.includes('not configured')) {
+      return 'YouTube learning resources are not configured. Set YOUTUBE_API_KEY for the backend and restart it.';
+    }
+    if (response.status === 422) return 'This learning language is not supported by the video search service.';
+    return detailMessage || 'YouTube learning resources could not be loaded. Please retry.';
+  }
+
+  async function loadResources(skill, language, pageToken = null, generation = searchGeneration.current, force = false) {
+    const existing = resourcesBySkill[skill]?.[language];
+    if (!pageToken && !force && ['loading', 'loaded'].includes(existing?.status)) return;
+    if (pageToken && existing?.loadingMore) return;
+    if (pageToken) {
+      updateResource(skill, language, (previous) => ({ ...previous, loadingMore: true, moreError: '' }));
+    } else {
+      updateResource(skill, language, { status: 'loading', videos: [] });
+    }
 
     try {
+      const currentUser = auth?.currentUser;
+      if (!currentUser) throw new Error('Sign in again to load learning resources.');
+      if (currentUser.uid !== user?.uid) throw new Error('Your sign-in changed. Reload the page and try again.');
+
       let idToken;
       try {
         idToken = await currentUser.getIdToken(true);
       } catch {
-        setResourcesBySkill((current) => ({
-          ...current,
-          [skill]: { status: 'error', message: 'Your sign-in could not be verified. Sign in again, then retry.', videos: [] },
-        }));
-        return;
+        throw new Error('Your sign-in could not be verified. Sign in again, then retry.');
       }
-      if (auth?.currentUser?.uid !== currentUser.uid) {
-        setResourcesBySkill((current) => ({
-          ...current,
-          [skill]: { status: 'error', message: 'Your sign-in changed. Reload the page and try again.', videos: [] },
-        }));
-        return;
-      }
-      let { response, result } = await requestLearningResources(skill, idToken);
+      if (generation !== searchGeneration.current) return;
+      if (auth?.currentUser?.uid !== currentUser.uid) throw new Error('Your sign-in changed. Reload the page and try again.');
+
+      let { response, result } = await requestLearningResources(skill, language, idToken, pageToken);
       if (response.status === 401 && result.detail?.code === 'firebase-token-expired') {
-        if (auth?.currentUser?.uid !== currentUser.uid) {
-          setResourcesBySkill((current) => ({
-            ...current,
-            [skill]: { status: 'error', message: 'Your sign-in changed. Reload the page and try again.', videos: [] },
-          }));
-          return;
-        }
+        if (auth?.currentUser?.uid !== currentUser.uid) throw new Error('Your sign-in changed. Reload the page and try again.');
         try {
           idToken = await currentUser.getIdToken(true);
         } catch {
-          setResourcesBySkill((current) => ({
-            ...current,
-            [skill]: { status: 'error', message: 'Your sign-in could not be refreshed. Sign in again, then retry.', videos: [] },
-          }));
-          return;
+          throw new Error('Your sign-in could not be refreshed. Sign in again, then retry.');
         }
-        if (auth?.currentUser?.uid !== currentUser.uid) {
-          setResourcesBySkill((current) => ({
-            ...current,
-            [skill]: { status: 'error', message: 'Your sign-in changed. Reload the page and try again.', videos: [] },
-          }));
-          return;
-        }
-        ({ response, result } = await requestLearningResources(skill, idToken));
+        if (generation !== searchGeneration.current) return;
+        if (auth?.currentUser?.uid !== currentUser.uid) throw new Error('Your sign-in changed. Reload the page and try again.');
+        ({ response, result } = await requestLearningResources(skill, language, idToken, pageToken));
       }
+      if (!response.ok) throw new Error(getResourceErrorMessage(response, result));
+      if (generation !== searchGeneration.current) return;
 
-      if (!response.ok) {
-        const detailCode = typeof result.detail === 'object' ? result.detail?.code : undefined;
-        const detailMessage = typeof result.detail === 'string' ? result.detail : result.detail?.message;
-        const message = response.status === 401
-          ? detailCode === 'firebase-sign-in-required'
-            ? 'Sign in to load learning resources.'
-            : detailCode === 'firebase-token-expired'
-              ? 'Your Firebase sign-in has expired. Sign in again, then retry.'
-              : detailCode === 'firebase-token-revoked'
-                ? 'This Firebase sign-in is no longer valid. Sign in again, then retry.'
-                : detailCode === 'firebase-token-project-mismatch'
-                  ? 'The sign-in token belongs to a different Firebase project. Confirm the frontend and backend use the same Firebase project.'
-                  : detailCode === 'firebase-token-issuer-mismatch'
-                    ? 'The sign-in token issuer does not match the backend Firebase project. Check the Firebase project configuration.'
-                    : detailCode === 'firebase-token-signature-invalid'
-                      ? 'Firebase could not validate this token signature. Check the Firebase project and token configuration.'
-                      : 'Firebase could not verify this token. Check that the frontend and backend use the same Firebase project; your session has not been assumed to be expired.'
-          : response.status === 503 && detailCode?.startsWith('firebase-')
-            ? detailMessage || 'Firebase token verification is unavailable. Please retry shortly.'
-            : response.status === 503 && detailMessage?.includes('not configured')
-          ? 'YouTube learning resources are not configured. Set YOUTUBE_API_KEY for the backend and restart it.'
-          : detailMessage || 'YouTube learning resources could not be loaded. Please retry.';
-        setResourcesBySkill((current) => ({ ...current, [skill]: { status: 'error', message, videos: [] } }));
-        return;
-      }
-      setResourcesBySkill((current) => ({
-        ...current,
-        [skill]: { status: 'loaded', videos: Array.isArray(result.videos) ? result.videos : [] },
-      }));
-    } catch {
-      setResourcesBySkill((current) => ({
-        ...current,
-        [skill]: { status: 'error', message: 'The learning resources service is unavailable. Check the backend and retry.', videos: [] },
-      }));
+      updateResource(skill, language, (previous) => {
+        const incomingVideos = Array.isArray(result.videos) ? result.videos : [];
+        const combinedVideos = pageToken ? [...(previous?.videos || []), ...incomingVideos] : incomingVideos;
+        const seenVideoIds = new Set();
+        const videos = combinedVideos.filter((video) => {
+          if (!video?.videoId || seenVideoIds.has(video.videoId)) return false;
+          seenVideoIds.add(video.videoId);
+          return true;
+        });
+        return {
+          status: 'loaded',
+          videos,
+          nextPageToken: typeof result.nextPageToken === 'string' ? result.nextPageToken : null,
+          loadingMore: false,
+          moreError: '',
+        };
+      });
+    } catch (error) {
+      if (generation !== searchGeneration.current) return;
+      const message = error instanceof Error
+        ? error.message
+        : 'The learning resources service is unavailable. Check the backend and retry.';
+      updateResource(skill, language, (previous) => pageToken
+        ? { ...previous, loadingMore: false, moreError: message }
+        : { status: 'error', message, videos: [] });
     }
   }
+
+  function submitLanguageSelection() {
+    if (!selectedLanguages.length) {
+      setLanguageError('Choose at least one language before searching.');
+      return;
+    }
+    searchGeneration.current += 1;
+    setResourcesBySkill({});
+    setLanguageError('');
+    setSubmittedLanguages([...selectedLanguages]);
+  }
+
+  function changeLanguages() {
+    searchGeneration.current += 1;
+    setResourcesBySkill({});
+    setSubmittedLanguages(null);
+    setLanguageError('');
+  }
+
+  useEffect(() => {
+    if (!submittedLanguages?.length || !selectedRecord || !selectedCareer) return undefined;
+    const generation = searchGeneration.current;
+    setResourcesBySkill({});
+    getSkillsToLearn(selectedCareer).forEach(({ skill }) => {
+      submittedLanguages.forEach((language) => {
+        void loadResources(skill, language, null, generation, true);
+      });
+    });
+    return () => { searchGeneration.current += 1; };
+  }, [submittedLanguages, selectedRecord?.id, selectedCareerPath, user?.uid]);
 
   async function toggleCompleted(skill) {
     if (!selectedRecord || !firestore || auth?.currentUser?.uid !== user?.uid) return;
@@ -317,8 +373,43 @@ function SkillGapLearning({ user, onRequestSignIn }) {
           <h2>No saved career paths yet.</h2>
           <p>Generate Career Recommendations first. New recommendation results are saved here automatically for your account.</p>
         </div>
+      ) : submittedLanguages === null ? (
+        <section className="learning-language-step" aria-labelledby="learning-language-title">
+          <h2 id="learning-language-title">Which language would you like to learn in?</h2>
+          <p>Choose one or more languages to find learning videos you understand.</p>
+          <p className="learning-language-note">YouTube language relevance is approximate; check each video for its spoken language.</p>
+          <fieldset className="learning-language-options">
+            <legend className="visually-hidden">Preferred learning languages</legend>
+            {LEARNING_LANGUAGES.map((language) => (
+              <label
+                className={`learning-language-option${selectedLanguages.includes(language.code) ? ' learning-language-option--selected' : ''}`}
+                key={language.code}
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedLanguages.includes(language.code)}
+                  onChange={() => {
+                    setSelectedLanguages((current) => current.includes(language.code)
+                      ? current.filter((code) => code !== language.code)
+                      : [...current, language.code]);
+                    setLanguageError('');
+                  }}
+                />
+                <span>{language.label}</span>
+              </label>
+            ))}
+          </fieldset>
+          {languageError && <p className="skill-gap-error" role="alert">{languageError}</p>}
+          <button className="button button-primary" type="button" onClick={submitLanguageSelection}>
+            Search Learning Videos
+          </button>
+        </section>
       ) : (
         <>
+          <div className="learning-language-toolbar">
+            <p>Searching in {submittedLanguages.map((code) => LEARNING_LANGUAGES.find((language) => language.code === code)?.label).join(', ')}</p>
+            <button className="button button-secondary" type="button" onClick={changeLanguages}>Change Languages</button>
+          </div>
           <div className="skill-gap-selector">
             <label htmlFor="saved-career-select">Saved recommendation</label>
             <select id="saved-career-select" value={selectedId} onChange={(event) => {
@@ -352,10 +443,10 @@ function SkillGapLearning({ user, onRequestSignIn }) {
 
           {selectedRecord && (() => {
             const career = careers.find((item) => item.careerPath === selectedCareerPath) || careers[0];
-            const skillPlan = Array.isArray(career?.skillLearningPlan) ? [...career.skillLearningPlan].sort((a, b) => a.sequenceOrder - b.sequenceOrder) : [];
-            const skillsToLearn = skillPlan.length
-              ? skillPlan
-              : (career?.missingSkills || []).map((skill, index) => ({ skill, sequenceOrder: index + 1 }));
+            const skillPlan = Array.isArray(career?.skillLearningPlan)
+              ? [...career.skillLearningPlan].sort((first, second) => first.sequenceOrder - second.sequenceOrder)
+              : [];
+            const skillsToLearn = getSkillsToLearn(career);
 
             return (
               <>
@@ -400,39 +491,88 @@ function SkillGapLearning({ user, onRequestSignIn }) {
                       <div className="skill-resource-list">
                         {skillsToLearn.map((plan) => {
                           const skill = plan.skill;
-                          const resourceState = resourcesBySkill[skill];
                           const completed = completedSkills.has(skill);
                           return (
                             <article className={`skill-resource${completed ? ' skill-resource--completed' : ''}`} key={skill}>
                               <header className="skill-resource-heading">
-                                <div><span className="skill-sequence-number">{plan.sequenceOrder}</span><div><h4>{skill}</h4>{plan.priority ? <span className={`skill-priority skill-priority--${plan.priority.toLowerCase()}`}>{plan.priority} priority</span> : <span className="skill-gap-muted">Priority unavailable in this saved result</span>}</div></div>
+                                <div><span className="skill-sequence-number">{plan.sequenceOrder}</span><div className="skill-resource-labels"><div className="skill-resource-title-line"><h4>{skill}</h4><span className={`skill-completion-status${completed ? ' skill-completion-status--done' : ''}`}>{completed ? 'Completed' : 'In progress'}</span></div>{plan.priority ? <span className={`skill-priority skill-priority--${plan.priority.toLowerCase()}`}>{plan.priority} priority</span> : <span className="skill-gap-muted">Priority unavailable in this saved result</span>}</div></div>
                                 <button className={`button ${completed ? 'button-secondary' : 'button-primary'}`} type="button" onClick={() => toggleCompleted(skill)} disabled={savingSkill === skill || progressLoading}>
                                   {savingSkill === skill ? 'Saving...' : completed ? 'Completed' : 'Mark as completed'}
                                 </button>
                               </header>
-                              <div className="skill-video-heading">
-                                <h5>YouTube lessons</h5>
-                                {!resourceState?.status && <button className="small-action" type="button" onClick={() => loadResources(skill)}>Find videos</button>}
-                                {resourceState?.status === 'error' && <button className="small-action" type="button" onClick={() => {
-                                  setResourcesBySkill((current) => ({ ...current, [skill]: undefined }));
-                                  loadResources(skill);
-                                }}>Retry</button>}
+                              <div className="skill-language-results">
+                                {submittedLanguages.map((languageCode) => {
+                                  const language = LEARNING_LANGUAGES.find((item) => item.code === languageCode);
+                                  const resourceState = resourcesBySkill[skill]?.[languageCode];
+                                  return (
+                                    <section className="skill-language-result" key={languageCode}>
+                                      <div className="skill-video-heading">
+                                        <h5>{language?.label} learning videos</h5>
+                                        <span className="learning-language-badge">{languageCode.toUpperCase()}</span>
+                                      </div>
+                                      {resourceState?.status === 'loading' && (
+                                        <div className="learning-video-loading" role="status">
+                                          <p className="skill-gap-muted">Searching YouTube...</p>
+                                          <div className="learning-video-skeleton-grid" aria-hidden="true">
+                                            {[0, 1, 2].map((skeleton) => (
+                                              <div className="learning-video-skeleton" key={skeleton}>
+                                                <span className="learning-video-skeleton-thumbnail" />
+                                                <span className="learning-video-skeleton-line" />
+                                                <span className="learning-video-skeleton-line learning-video-skeleton-line--short" />
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                      {resourceState?.status === 'error' && (
+                                        <div className="learning-resource-error">
+                                          <p className="skill-gap-error" role="alert">{resourceState.message}</p>
+                                          <button className="small-action" type="button" onClick={() => loadResources(skill, languageCode)}>Retry</button>
+                                        </div>
+                                      )}
+                                      {resourceState?.status === 'loaded' && (
+                                        <>
+                                          {resourceState.videos.length ? (
+                                            <ul className="youtube-resource-grid">
+                                              {resourceState.videos.map((video) => (
+                                                <li className="youtube-video-card" key={video.videoId}>
+                                                  <a className="youtube-video-link" href={video.videoUrl} target="_blank" rel="noreferrer" aria-label={`Watch ${video.title} on YouTube`}>
+                                                    <span className="youtube-video-thumbnail">
+                                                      {video.thumbnailUrl
+                                                        ? <img src={video.thumbnailUrl} alt="" loading="lazy" />
+                                                        : <span className="youtube-thumbnail-fallback">Video preview</span>}
+                                                      <span className="youtube-play-mark" aria-hidden="true">▶</span>
+                                                    </span>
+                                                    <span className="youtube-video-copy">
+                                                      <strong>{video.title}</strong>
+                                                      <small>{video.channelName}</small>
+                                                      <span className="youtube-watch-action">Watch Video <span aria-hidden="true">↗</span></span>
+                                                    </span>
+                                                  </a>
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          ) : <p className="skill-gap-muted">YouTube returned no videos for this skill and language.</p>}
+                                          {resourceState.moreError && (
+                                            <div className="learning-resource-error">
+                                              <p className="skill-gap-error" role="alert">{resourceState.moreError}</p>
+                                              <button className="small-action" type="button" onClick={() => loadResources(skill, languageCode, resourceState.nextPageToken)}>Retry</button>
+                                            </div>
+                                          )}
+                                          <button
+                                            className="small-action learning-load-more"
+                                            type="button"
+                                            disabled={!resourceState.nextPageToken || resourceState.loadingMore}
+                                            onClick={() => loadResources(skill, languageCode, resourceState.nextPageToken)}
+                                          >
+                                            {resourceState.loadingMore ? 'Loading videos...' : resourceState.nextPageToken ? 'Load More Videos' : 'No more videos'}
+                                          </button>
+                                        </>
+                                      )}
+                                    </section>
+                                  );
+                                })}
                               </div>
-                              {resourceState?.status === 'loading' && <p className="skill-gap-muted" role="status">Searching YouTube...</p>}
-                              {resourceState?.status === 'error' && <p className="skill-gap-error" role="alert">{resourceState.message}</p>}
-                              {resourceState?.status === 'loaded' && (resourceState.videos.length ? (
-                                <ul className="youtube-resource-list">
-                                  {resourceState.videos.map((video) => (
-                                    <li key={video.videoId}>
-                                      <a href={video.videoUrl} target="_blank" rel="noreferrer">
-                                        {video.thumbnailUrl && <img src={video.thumbnailUrl} alt="" loading="lazy" />}
-                                        <span><strong>{video.title}</strong><small>{video.channelName}</small></span>
-                                        <span className="youtube-open" aria-hidden="true">↗</span>
-                                      </a>
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : <p className="skill-gap-muted">YouTube returned no videos for this skill.</p>)}
                             </article>
                           );
                         })}

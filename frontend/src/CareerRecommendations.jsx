@@ -213,7 +213,9 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
                       </section>
                     </div>
 
-                    <div className="career-detail-grid">
+                    <details className="career-detail-disclosure">
+                      <summary>Learning roadmap, portfolio idea, and next steps</summary>
+                      <div className="career-detail-grid">
                       <section className="career-roadmap">
                         <h4>Learning roadmap</h4>
                         <ol>
@@ -235,7 +237,8 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
                           <ol>{career.nextSteps.map((step, stepIndex) => <li key={`${step}-${stepIndex}`}>{step}</li>)}</ol>
                         </div>
                       </section>
-                    </div>
+                      </div>
+                    </details>
                   </article>
                 ))}
               </div>

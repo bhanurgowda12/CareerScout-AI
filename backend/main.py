@@ -37,6 +37,16 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 bearer_scheme = HTTPBearer(auto_error=False)
+YOUTUBE_LANGUAGES = {
+    "en": "English",
+    "kn": "Kannada",
+    "hi": "Hindi",
+    "te": "Telugu",
+    "ta": "Tamil",
+    "ml": "Malayalam",
+    "mr": "Marathi",
+    "bn": "Bengali",
+}
 
 
 _SAFE_EXCEPTION_TYPES = {
@@ -452,8 +462,15 @@ def health_check():
 @app.get("/api/learning-resources")
 def get_learning_resources(
     skill: str = Query(min_length=1, max_length=120),
+    language: str = Query(min_length=2, max_length=2),
+    page_token: str | None = Query(default=None, alias="pageToken"),
     _user_id: str = Depends(require_firebase_user),
 ):
+    language_code = language.strip().lower()
+    language_name = YOUTUBE_LANGUAGES.get(language_code)
+    if not language_name:
+        raise HTTPException(status_code=422, detail="Unsupported learning language.")
+
     api_key = os.environ.get("YOUTUBE_API_KEY", "").strip()
     if not api_key:
         logging.getLogger(__name__).error(
@@ -464,11 +481,14 @@ def get_learning_resources(
     query_parameters = urlencode({
         "key": api_key,
         "part": "snippet",
-        "q": skill.strip(),
+        "q": f"{skill.strip()} tutorial {language_name}",
         "type": "video",
-        "maxResults": 3,
+        "maxResults": 10,
         "safeSearch": "moderate",
         "videoEmbeddable": "true",
+        "relevanceLanguage": language_code,
+        "regionCode": "IN",
+        **({"pageToken": page_token} if page_token else {}),
     })
     request = URLRequest(
         f"https://www.googleapis.com/youtube/v3/search?{query_parameters}",
@@ -491,7 +511,7 @@ def get_learning_resources(
         ) from error
 
     videos = []
-    for item in payload.get("items", []):
+    for item in payload.get("items", [])[:10]:
         snippet = item.get("snippet", {})
         video_id = item.get("id", {}).get("videoId")
         if not video_id or not snippet.get("title") or not snippet.get("channelTitle"):
@@ -510,4 +530,8 @@ def get_learning_resources(
             "videoUrl": f"https://www.youtube.com/watch?v={quote(video_id, safe='')}",
         })
 
-    return {"videos": videos}
+    next_page_token = payload.get("nextPageToken")
+    return {
+        "videos": videos,
+        "nextPageToken": next_page_token if isinstance(next_page_token, str) and next_page_token else None,
+    }

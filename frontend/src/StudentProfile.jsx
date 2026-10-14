@@ -581,6 +581,17 @@ function StudentProfile({ user, onRequestSignIn }) {
   const isAuthorized = canUseProfile(user) && auth?.currentUser?.uid === user.uid;
   const isLoaded = loadedUid === user?.uid;
   const isBusy = saving || deleting || importing || Boolean(restoringVersionId);
+  const profileEssentials = [
+    Boolean(profile.fullName.trim()),
+    Boolean(profile.email.trim()),
+    Boolean(profile.degree.trim()),
+    Boolean(profile.branch.trim()),
+    Boolean(profile.college.trim()),
+    Boolean(profile.graduationYear.trim()),
+    profile.interests.length > 0,
+    Boolean(profile.experienceLevel),
+  ];
+  const completedEssentials = profileEssentials.filter(Boolean).length;
 
   function addProject() {
     setProfile((current) => ({
@@ -643,6 +654,20 @@ function StudentProfile({ user, onRequestSignIn }) {
               </button>
             </aside>
           )}
+
+          <section className="profile-completion" aria-labelledby="profile-completion-title">
+            <div className="profile-completion-heading">
+              <div>
+                <p className="eyebrow">A useful starting point</p>
+                <h2 id="profile-completion-title">Profile essentials</h2>
+              </div>
+              <strong>{completedEssentials} of {profileEssentials.length} complete</strong>
+            </div>
+            <progress value={completedEssentials} max={profileEssentials.length} aria-label={`${completedEssentials} of ${profileEssentials.length} profile essentials complete`} />
+            <p>{completedEssentials === profileEssentials.length
+              ? 'Your core profile is ready to inform career recommendations.'
+              : 'Complete the required details below to give your recommendations a stronger starting point.'}</p>
+          </section>
 
           <form className="profile-form" onSubmit={saveProfile} noValidate>
         <ProfileSection number="01" title="Personal information" description="How should we identify you?">
@@ -712,6 +737,12 @@ function StudentProfile({ user, onRequestSignIn }) {
         </ProfileSection>
 
         <ProfileSection number="05" title="Projects" description="Add projects that show what you can do.">
+          {profile.projects.length === 0 && (
+            <div className="profile-empty-entry">
+              <strong>No projects added yet</strong>
+              <p>A class assignment, personal build, or team project can help show how you apply your skills.</p>
+            </div>
+          )}
           <div className="repeatable-list">
             {profile.projects.map((project, index) => (
               <div className="repeatable-item" key={index}>
@@ -738,6 +769,12 @@ function StudentProfile({ user, onRequestSignIn }) {
         </ProfileSection>
 
         <ProfileSection number="06" title="Certifications" description="Include courses or certifications you have completed.">
+          {profile.certifications.length === 0 && (
+            <div className="profile-empty-entry">
+              <strong>No certifications added yet</strong>
+              <p>Add a completed course or credential whenever you have one. This section is optional.</p>
+            </div>
+          )}
           <div className="repeatable-list">
             {profile.certifications.map((certification, index) => (
               <div className="repeatable-item" key={index}>

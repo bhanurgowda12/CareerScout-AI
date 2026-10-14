@@ -1,6 +1,9 @@
+import json
+import os
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
@@ -20,6 +23,11 @@ class FirebaseAuthenticationTests(unittest.TestCase):
 
     def authenticate(self):
         return main.require_firebase_user(request=None, credentials=self.credentials)
+
+    def youtube_response(self, payload):
+        response = MagicMock()
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+        return response
 
     def test_valid_token_is_verified_without_auth_api_revocation_lookup(self):
         decoded_token = {
@@ -107,6 +115,99 @@ class FirebaseAuthenticationTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.status_code, 503)
         self.assertEqual(raised.exception.detail["code"], "firebase-verification-unavailable")
+
+    def test_supported_languages_set_youtube_search_parameters(self):
+        cases = (
+            ("en", "English"),
+            ("kn", "Kannada"),
+            ("hi", "Hindi"),
+            ("te", "Telugu"),
+            ("ta", "Tamil"),
+            ("ml", "Malayalam"),
+            ("mr", "Marathi"),
+            ("bn", "Bengali"),
+        )
+        with patch.dict(os.environ, {"YOUTUBE_API_KEY": "test-youtube-key"}):
+            for language_code, language_name in cases:
+                with self.subTest(language=language_code):
+                    response = self.youtube_response({"items": []})
+                    with patch.object(main, "urlopen", return_value=response) as urlopen_mock:
+                        main.get_learning_resources(
+                            skill="JavaScript",
+                            language=language_code,
+                            _user_id="student-123",
+                        )
+
+                    parameters = parse_qs(urlparse(urlopen_mock.call_args.args[0].full_url).query)
+                    self.assertEqual(parameters["q"], [f"JavaScript tutorial {language_name}"])
+                    self.assertEqual(parameters["relevanceLanguage"], [language_code])
+                    self.assertEqual(parameters["regionCode"], ["IN"])
+                    self.assertEqual(parameters["type"], ["video"])
+                    self.assertEqual(parameters["maxResults"], ["10"])
+
+    def test_unsupported_language_is_rejected_before_youtube_request(self):
+        with (
+            patch.dict(os.environ, {"YOUTUBE_API_KEY": "test-youtube-key"}),
+            patch.object(main, "urlopen") as urlopen_mock,
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                main.get_learning_resources(
+                    skill="JavaScript",
+                    language="xx",
+                    _user_id="student-123",
+                )
+
+        self.assertEqual(raised.exception.status_code, 422)
+        urlopen_mock.assert_not_called()
+
+    def test_languages_are_separate_youtube_searches(self):
+        responses = [self.youtube_response({"items": []}) for _ in range(2)]
+        with (
+            patch.dict(os.environ, {"YOUTUBE_API_KEY": "test-youtube-key"}),
+            patch.object(main, "urlopen", side_effect=responses) as urlopen_mock,
+        ):
+            for language_code in ("kn", "en"):
+                main.get_learning_resources(
+                    skill="React",
+                    language=language_code,
+                    _user_id="student-123",
+                )
+
+        queries = [
+            parse_qs(urlparse(call.args[0].full_url).query)["q"][0]
+            for call in urlopen_mock.call_args_list
+        ]
+        self.assertEqual(queries, ["React tutorial Kannada", "React tutorial English"])
+
+    def test_pagination_token_and_result_limit(self):
+        items = [
+            {
+                "id": {"videoId": f"video-{index}"},
+                "snippet": {
+                    "title": f"Lesson {index}",
+                    "channelTitle": "Learning Channel",
+                    "thumbnails": {},
+                },
+            }
+            for index in range(12)
+        ]
+        response = self.youtube_response({"items": items, "nextPageToken": "next-page"})
+        with (
+            patch.dict(os.environ, {"YOUTUBE_API_KEY": "test-youtube-key"}),
+            patch.object(main, "urlopen", return_value=response) as urlopen_mock,
+        ):
+            result = main.get_learning_resources(
+                skill="TypeScript",
+                language="te",
+                page_token="previous-page",
+                _user_id="student-123",
+            )
+
+        parameters = parse_qs(urlparse(urlopen_mock.call_args.args[0].full_url).query)
+        self.assertEqual(parameters["pageToken"], ["previous-page"])
+        self.assertEqual(parameters["maxResults"], ["10"])
+        self.assertEqual(len(result["videos"]), 10)
+        self.assertEqual(result["nextPageToken"], "next-page")
 
 
 if __name__ == "__main__":

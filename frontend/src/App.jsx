@@ -9,19 +9,31 @@ import SkillGapLearning from './SkillGapLearning.jsx';
 const highlights = [
   {
     number: '01',
-    title: 'Explore career paths',
-    description: 'See where your interests and strengths could take you.',
+    title: 'Career discovery',
+    description: 'Explore practical paths connected to your interests and strengths.',
   },
   {
     number: '02',
-    title: 'Spot skill gaps',
-    description: 'Understand what to learn next for the roles you want.',
+    title: 'Skill gap analysis',
+    description: 'See what you already bring and what to learn next.',
   },
   {
     number: '03',
-    title: 'Find your next step',
-    description: 'Discover learning resources and early-career opportunities.',
+    title: 'Personalized learning',
+    description: 'Find video lessons for the skills in your chosen career path.',
   },
+  {
+    number: '04',
+    title: 'Progress tracking',
+    description: 'Mark skills complete and keep your learning momentum visible.',
+  },
+];
+
+const workflowSteps = [
+  'Build your profile',
+  'Explore careers',
+  'Learn skills',
+  'Track progress',
 ];
 
 function hasVerifiedAccess(user) {
@@ -38,6 +50,7 @@ function App() {
   const [authReady, setAuthReady] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
   const [authNotice, setAuthNotice] = useState('');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     if (!auth) {
@@ -60,6 +73,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!import.meta.env.DEV) return undefined;
     const controller = new AbortController();
 
     async function checkBackend() {
@@ -128,35 +142,47 @@ function App() {
   return (
     <main>
       <header className="site-header">
-        <a className="brand" href="#top" aria-label="CareerScout AI home" onClick={() => setCurrentPage('home')}>
+        <a className="brand" href="#top" aria-label="CareerScout AI home" aria-current={currentPage === 'home' ? 'page' : undefined} onClick={() => { setCurrentPage('home'); setMobileNavOpen(false); }}>
           <span className="brand-mark" aria-hidden="true">C</span>
           <span>CareerScout<span className="brand-ai"> AI</span></span>
         </a>
-        <nav className="site-nav" aria-label="Main navigation">
+        <nav id="primary-navigation" className={`site-nav${mobileNavOpen ? ' site-nav--open' : ''}`} aria-label="Main navigation">
           {currentPage === 'home' ? (
             <>
-              <a href="#how-it-works">How it works</a>
-              <a href="#explore">Explore</a>
+              <a href="#how-it-works" onClick={() => setMobileNavOpen(false)}>How it works</a>
+              <a href="#explore" onClick={() => setMobileNavOpen(false)}>Explore</a>
             </>
           ) : (
-            <a href="#top" onClick={() => setCurrentPage('home')}>Home</a>
+            <a href="#top" onClick={() => { setCurrentPage('home'); setMobileNavOpen(false); }}>Home</a>
           )}
           <a
             href="#student-profile"
             aria-current={currentPage === 'profile' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); openProtectedPage('profile', 'your Student Profile'); }}
+            onClick={(event) => { event.preventDefault(); setMobileNavOpen(false); openProtectedPage('profile', 'your Student Profile'); }}
           >Student Profile</a>
           <a
             href="#career-recommendations"
             aria-current={currentPage === 'recommendations' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); openProtectedPage('recommendations', 'Career Recommendations'); }}
+            onClick={(event) => { event.preventDefault(); setMobileNavOpen(false); openProtectedPage('recommendations', 'Career Recommendations'); }}
           >Career Recommendations</a>
           <a
             href="#skill-gap-learning"
             aria-current={currentPage === 'learning' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); openProtectedPage('learning', 'Skill Gap & Learning Resources'); }}
+            onClick={(event) => { event.preventDefault(); setMobileNavOpen(false); openProtectedPage('learning', 'Skill Gap & Learning Resources'); }}
           >Skill Gap & Learning Resources</a>
         </nav>
+        <button
+          className="mobile-menu-toggle"
+          type="button"
+          aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
+          aria-expanded={mobileNavOpen}
+          aria-controls="primary-navigation"
+          onClick={() => setMobileNavOpen((open) => !open)}
+        >
+          <span aria-hidden="true" />
+          <span aria-hidden="true" />
+          <span aria-hidden="true" />
+        </button>
         <div className="account-controls">
           {!authReady ? (
             <span className="account-status" role="status">Checking sign-in...</span>
@@ -166,7 +192,7 @@ function App() {
                 {authUser.email || 'Signed in'}
               </span>
               {!hasVerifiedAccess(authUser) && (
-                <button className="account-action" type="button" onClick={() => setCurrentPage('auth')}>
+                <button className="account-action" type="button" onClick={() => { setCurrentPage('auth'); setMobileNavOpen(false); }}>
                   Verify email
                 </button>
               )}
@@ -175,7 +201,7 @@ function App() {
               </button>
             </>
           ) : (
-            <button className="account-action" type="button" onClick={() => setCurrentPage('auth')}>
+            <button className="account-action" type="button" onClick={() => { setCurrentPage('auth'); setMobileNavOpen(false); }}>
               Sign in
             </button>
           )}
@@ -183,7 +209,7 @@ function App() {
         <a
           className="nav-cta"
           href={currentPage === 'home' ? '#explore' : '#top'}
-          onClick={currentPage !== 'home' ? () => setCurrentPage('home') : undefined}
+          onClick={currentPage !== 'home' ? () => { setCurrentPage('home'); setMobileNavOpen(false); } : undefined}
         >
           {currentPage === 'home' ? 'Find your direction' : 'Back to CareerScout'} <span aria-hidden="true">↗</span>
         </a>
@@ -211,17 +237,19 @@ function App() {
       <section className="hero" id="top">
         <div className="hero-copy">
           <p className="eyebrow"><span className="eyebrow-dot" /> A clearer path starts here</p>
-          <div className={`api-status api-status--${apiStatus}`} role="status" aria-live="polite">
-            <span className="api-status-indicator" aria-hidden="true" />
-            {apiStatusLabel}
-          </div>
+          {import.meta.env.DEV && (
+            <div className={`api-status api-status--${apiStatus}`} role="status" aria-live="polite">
+              <span className="api-status-indicator" aria-hidden="true" />
+              {apiStatusLabel}
+            </div>
+          )}
           <h1>Your future is<br />yours to <span>explore.</span></h1>
           <p className="hero-description">
             Career ideas, practical skills, and real opportunities, brought together to help you figure out what comes next.
           </p>
           <div className="hero-actions">
             <a className="button button-primary" href="#explore">Get Started <span aria-hidden="true">↗</span></a>
-            <a className="button button-secondary" href="#how-it-works">Explore Careers <span aria-hidden="true">↓</span></a>
+            <a className="button button-secondary" href="#explore">Explore Careers <span aria-hidden="true">↓</span></a>
           </div>
           <div className="hero-note">
             <span className="note-mark" aria-hidden="true">✳</span>
@@ -250,7 +278,7 @@ function App() {
       </section>
 
       <section className="explore-section" id="explore">
-        <div className="section-heading" id="how-it-works">
+        <div className="section-heading">
           <p className="eyebrow">Start with what matters to you</p>
           <h2>Curiosity, meet direction.</h2>
         </div>
@@ -264,6 +292,31 @@ function App() {
             </article>
           ))}
         </div>
+      </section>
+
+      <section className="workflow-section" id="how-it-works" aria-labelledby="workflow-title">
+        <div className="workflow-heading">
+          <p className="eyebrow">A simple next-step loop</p>
+          <h2 id="workflow-title">From where you are to where you want to go.</h2>
+        </div>
+        <ol className="workflow-steps">
+          {workflowSteps.map((step, index) => (
+            <li key={step}>
+              <span>{String(index + 1).padStart(2, '0')}</span>
+              <strong>{step}</strong>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="home-cta" aria-labelledby="home-cta-title">
+        <div>
+          <p className="eyebrow">Your next step starts with you</p>
+          <h2 id="home-cta-title">Make your interests a place to begin.</h2>
+        </div>
+        <button className="button button-primary" type="button" onClick={() => openProtectedPage('profile', 'your Student Profile')}>
+          Build your profile <span aria-hidden="true">↗</span>
+        </button>
       </section>
       </>}
 
