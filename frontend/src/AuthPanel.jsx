@@ -47,8 +47,8 @@ function getAuthErrorMessage(error) {
   }
 }
 
-function AuthPanel({ user, onAuthenticated }) {
-  const [mode, setMode] = useState('login');
+function AuthPanel({ user, onAuthenticated, initialMode = 'login', onModeChange }) {
+  const [mode, setMode] = useState(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pendingAction, setPendingAction] = useState('');
@@ -59,6 +59,10 @@ function AuthPanel({ user, onAuthenticated }) {
       : null
   ));
   const [verificationMessage, setVerificationMessage] = useState('');
+
+  useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
 
   useEffect(() => {
     if (isEmailPasswordUser(user) && !user.emailVerified) {
@@ -100,7 +104,7 @@ function AuthPanel({ user, onAuthenticated }) {
         onAuthenticated(result.user);
         try {
           await sendEmailVerification(result.user);
-          setVerificationMessage(`A verification link was sent to ${result.user.email}. Check your inbox and spam folder. Verify your email before opening your Student Profile.`);
+          setVerificationMessage(`A verification link was sent to ${result.user.email}. Check your inbox and spam folder. Verify your email before choosing your username and entering CareerScout.`);
         } catch {
           setVerificationMessage('Your account was created, but the verification email could not be sent. Use the resend button below to try again.');
         }
@@ -108,7 +112,7 @@ function AuthPanel({ user, onAuthenticated }) {
         const result = await signInWithEmailAndPassword(auth, email.trim(), password);
         if (!result.user.emailVerified) {
           setVerificationUser(result.user);
-          setVerificationMessage(`Please verify ${result.user.email} before opening your Student Profile. You can resend the verification email below.`);
+          setVerificationMessage(`Please verify ${result.user.email} before choosing your username and entering CareerScout. You can resend the verification email below.`);
           onAuthenticated(result.user);
           return;
         }
@@ -147,7 +151,7 @@ function AuthPanel({ user, onAuthenticated }) {
       if (verificationUser.emailVerified) {
         await verificationUser.getIdToken(true);
         setVerificationUser(null);
-        setVerificationMessage('Email verified. Your Student Profile is now available.');
+        setVerificationMessage('Email verified. Choose your username to continue.');
         onAuthenticated(verificationUser);
       } else {
         setVerificationMessage('Your email is not verified yet. Open the link in the email, then check again.');
@@ -180,7 +184,7 @@ function AuthPanel({ user, onAuthenticated }) {
   const isPending = pendingAction !== '';
   const visibleVerificationMessage = verificationMessage || (
     verificationUser && !verificationUser.emailVerified
-      ? `Verify ${verificationUser.email} before opening your Student Profile. You can resend the verification email below.`
+      ? `Verify ${verificationUser.email} before choosing your username and entering CareerScout. You can resend the verification email below.`
       : ''
   );
 
@@ -252,7 +256,9 @@ function AuthPanel({ user, onAuthenticated }) {
           <button
             type="button"
             onClick={() => {
-              setMode(mode === 'register' ? 'login' : 'register');
+              const nextMode = mode === 'register' ? 'login' : 'register';
+              setMode(nextMode);
+              onModeChange?.(nextMode);
               setErrorMessage('');
             }}
             disabled={isPending}

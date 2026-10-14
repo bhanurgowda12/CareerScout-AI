@@ -1,10 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 import AuthPanel from './AuthPanel.jsx';
-import { auth } from './firebase.js';
+import { auth, firestore } from './firebase.js';
 import StudentProfile from './StudentProfile.jsx';
 import CareerRecommendations from './CareerRecommendations.jsx';
 import SkillGapLearning from './SkillGapLearning.jsx';
+import StudentDashboard from './StudentDashboard.jsx';
+import UsernameSetup, { isValidUsername } from './UsernameSetup.jsx';
 
 const highlights = [
   {
@@ -36,6 +39,24 @@ const workflowSteps = [
   'Track progress',
 ];
 
+const pageHashes = {
+  home: '',
+  dashboard: '#student-dashboard',
+  profile: '#student-profile',
+  recommendations: '#career-recommendations',
+  learning: '#skill-gap-learning',
+  login: '#sign-in',
+  register: '#get-started',
+  username: '#choose-username',
+};
+
+const protectedPages = new Set(['dashboard', 'profile', 'recommendations', 'learning', 'username']);
+
+function getPageFromHash(hash) {
+  if (hash === '#top') return 'home';
+  return Object.entries(pageHashes).find(([, routeHash]) => routeHash && routeHash === hash)?.[0] || 'home';
+}
+
 function hasVerifiedAccess(user) {
   return Boolean(user && (
     user.emailVerified
@@ -45,12 +66,29 @@ function hasVerifiedAccess(user) {
 
 function App() {
   const [apiStatus, setApiStatus] = useState('checking');
-  const [currentPage, setCurrentPage] = useState('home');
+  const [currentPage, setCurrentPage] = useState(() => getPageFromHash(window.location.hash));
   const [authUser, setAuthUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
+  const [studentUsername, setStudentUsername] = useState('');
+  const [usernameStatus, setUsernameStatus] = useState('checking');
+  const [usernameLoadAttempt, setUsernameLoadAttempt] = useState(0);
   const [logoutPending, setLogoutPending] = useState(false);
   const [authNotice, setAuthNotice] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [learningFocus, setLearningFocus] = useState({ skill: '', careerPath: '' });
+  const [pendingDestination, setPendingDestination] = useState('');
+
+  function navigate(page, { replace = false } = {}) {
+    const routeHash = pageHashes[page] ?? '';
+    const currentHash = window.location.hash;
+    setCurrentPage(page);
+    setMobileNavOpen(false);
+    if (currentHash !== routeHash) {
+      const nextUrl = `${window.location.pathname}${window.location.search}${routeHash}`;
+      window.history[replace ? 'replaceState' : 'pushState'](null, '', nextUrl);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
   useEffect(() => {
     if (!auth) {
@@ -62,15 +100,110 @@ function App() {
       auth,
       (user) => {
         setAuthUser(user);
+        setStudentUsername('');
+        setUsernameStatus('checking');
         setAuthReady(true);
       },
       () => {
         setAuthUser(null);
+        setStudentUsername('');
+        setUsernameStatus('missing');
         setAuthReady(true);
         setAuthNotice('Your sign-in state could not be restored. Please try signing in again.');
       },
     );
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const uid = authUser?.uid;
+    if (!authReady || !hasVerifiedAccess(authUser)) {
+      setStudentUsername('');
+      setUsernameStatus('missing');
+      return undefined;
+    }
+
+    setUsernameStatus('checking');
+    if (!firestore || auth?.currentUser?.uid !== uid) {
+      setUsernameStatus('error');
+      return undefined;
+    }
+
+    getDoc(doc(firestore, 'users', uid, 'profile', 'profile'))
+      .then((snapshot) => {
+        if (cancelled || auth?.currentUser?.uid !== uid) return;
+        const savedUsername = snapshot.exists() ? snapshot.data().username : '';
+        if (isValidUsername(savedUsername)) {
+          setStudentUsername(savedUsername.trim());
+          setUsernameStatus('ready');
+        } else {
+          setStudentUsername('');
+          setUsernameStatus('missing');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStudentUsername('');
+          setUsernameStatus('error');
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [authReady, authUser?.uid, hasVerifiedAccess(authUser), usernameLoadAttempt]);
+
+  useEffect(() => {
+    function syncPageFromLocation() {
+      setCurrentPage(getPageFromHash(window.location.hash));
+      setMobileNavOpen(false);
+    }
+
+    window.addEventListener('hashchange', syncPageFromLocation);
+    window.addEventListener('popstate', syncPageFromLocation);
+    return () => {
+      window.removeEventListener('hashchange', syncPageFromLocation);
+      window.removeEventListener('popstate', syncPageFromLocation);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authReady || logoutPending) return;
+
+    if (protectedPages.has(currentPage) && !hasVerifiedAccess(authUser)) {
+      setPendingDestination(currentPage === 'username' ? 'dashboard' : currentPage);
+      setAuthNotice(authUser
+        ? 'Verify your email before opening this student page.'
+        : 'Sign in and verify your email to open this student page.');
+      navigate('login', { replace: true });
+      return;
+    }
+
+    if (!hasVerifiedAccess(authUser)) return;
+
+    if (usernameStatus === 'checking') return;
+
+    if (usernameStatus === 'error') {
+      if (currentPage !== 'home' && currentPage !== 'username') {
+        setPendingDestination((destination) => destination || (protectedPages.has(currentPage) ? currentPage : 'dashboard'));
+        navigate('username', { replace: true });
+      }
+      return;
+    }
+
+    if (usernameStatus === 'missing') {
+      if (currentPage !== 'home' && currentPage !== 'username') {
+        setPendingDestination((destination) => destination || (protectedPages.has(currentPage) ? currentPage : 'dashboard'));
+        navigate('username', { replace: true });
+      }
+      return;
+    }
+
+    if (usernameStatus === 'ready' && (currentPage === 'login' || currentPage === 'register' || currentPage === 'username')) {
+      const destination = pendingDestination || 'dashboard';
+      setPendingDestination('');
+      setAuthNotice('');
+      navigate(destination, { replace: true });
+    }
+  }, [authReady, authUser, currentPage, logoutPending, pendingDestination, usernameStatus]);
 
   useEffect(() => {
     if (!import.meta.env.DEV) return undefined;
@@ -107,8 +240,15 @@ function App() {
   function handleAuthenticated(user) {
     setAuthUser(user);
     setAuthReady(true);
+    if (!hasVerifiedAccess(user)) {
+      setAuthNotice('Verify your email before opening your student dashboard.');
+      return;
+    }
+    setUsernameStatus('checking');
+    setUsernameLoadAttempt((attempt) => attempt + 1);
+    setPendingDestination((destination) => destination || 'dashboard');
     setAuthNotice('');
-    setCurrentPage(hasVerifiedAccess(user) ? 'home' : 'auth');
+    navigate('username', { replace: true });
   }
 
   async function handleLogout() {
@@ -118,7 +258,11 @@ function App() {
     setAuthNotice('');
     try {
       await signOut(auth);
-      setCurrentPage('home');
+      setAuthUser(null);
+      setStudentUsername('');
+      setUsernameStatus('missing');
+      setPendingDestination('');
+      navigate('home', { replace: true });
     } catch {
       setAuthNotice('You could not be signed out. Please try again.');
     } finally {
@@ -129,47 +273,50 @@ function App() {
   function openProtectedPage(page, label) {
     if (hasVerifiedAccess(authUser)) {
       setAuthNotice('');
-      setCurrentPage(page);
+      navigate(page);
     } else {
-      setCurrentPage('auth');
+      setPendingDestination(page);
+      navigate('login');
       setAuthNotice(authUser
         ? `Verify your email before opening ${label}.`
         : `Sign in and verify your email to open ${label}.`);
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function openAuthPage(page) {
+    if (hasVerifiedAccess(authUser)) {
+      navigate('dashboard');
+      return;
+    }
+    setAuthNotice('');
+    navigate(page);
   }
 
   return (
     <main>
       <header className="site-header">
-        <a className="brand" href="#top" aria-label="CareerScout AI home" aria-current={currentPage === 'home' ? 'page' : undefined} onClick={() => { setCurrentPage('home'); setMobileNavOpen(false); }}>
+        <a className="brand" href="#top" aria-label="CareerScout AI home" aria-current={currentPage === 'home' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigate('home'); }}>
           <span className="brand-mark" aria-hidden="true">C</span>
           <span>CareerScout<span className="brand-ai"> AI</span></span>
         </a>
         <nav id="primary-navigation" className={`site-nav${mobileNavOpen ? ' site-nav--open' : ''}`} aria-label="Main navigation">
           {currentPage === 'home' ? (
             <>
-              <a href="#how-it-works" onClick={() => setMobileNavOpen(false)}>How it works</a>
-              <a href="#explore" onClick={() => setMobileNavOpen(false)}>Explore</a>
+              <a href="#top" aria-current="page" onClick={(event) => { event.preventDefault(); navigate('home'); }}>Home</a>
+              <a href="#explore" onClick={() => setMobileNavOpen(false)}>Features</a>
+              <a href="#how-it-works" onClick={() => setMobileNavOpen(false)}>About</a>
             </>
           ) : (
-            <a href="#top" onClick={() => { setCurrentPage('home'); setMobileNavOpen(false); }}>Home</a>
+            <a href="#top" onClick={(event) => { event.preventDefault(); navigate('home'); }}>Home</a>
           )}
-          <a
-            href="#student-profile"
-            aria-current={currentPage === 'profile' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); setMobileNavOpen(false); openProtectedPage('profile', 'your Student Profile'); }}
-          >Student Profile</a>
-          <a
-            href="#career-recommendations"
-            aria-current={currentPage === 'recommendations' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); setMobileNavOpen(false); openProtectedPage('recommendations', 'Career Recommendations'); }}
-          >Career Recommendations</a>
-          <a
-            href="#skill-gap-learning"
-            aria-current={currentPage === 'learning' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); setMobileNavOpen(false); openProtectedPage('learning', 'Skill Gap & Learning Resources'); }}
-          >Skill Gap & Learning Resources</a>
+          {authReady && hasVerifiedAccess(authUser) && usernameStatus === 'ready' && (
+            <>
+              <a href={pageHashes.dashboard} aria-current={currentPage === 'dashboard' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); openProtectedPage('dashboard', 'your Student Dashboard'); }}>Dashboard</a>
+              <a href={pageHashes.profile} aria-current={currentPage === 'profile' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); openProtectedPage('profile', 'your Student Profile'); }}>Student Profile</a>
+              <a href={pageHashes.recommendations} aria-current={currentPage === 'recommendations' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); openProtectedPage('recommendations', 'Career Recommendations'); }}>Career Recommendations</a>
+              <a href={pageHashes.learning} aria-current={currentPage === 'learning' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); setLearningFocus({ skill: '', careerPath: '' }); openProtectedPage('learning', 'Skill Gap & Learning Resources'); }}>Skill Gap & Learning Resources</a>
+            </>
+          )}
         </nav>
         <button
           className="mobile-menu-toggle"
@@ -186,53 +333,95 @@ function App() {
         <div className="account-controls">
           {!authReady ? (
             <span className="account-status" role="status">Checking sign-in...</span>
-          ) : authUser ? (
+          ) : hasVerifiedAccess(authUser) ? (
             <>
-              <span className="account-email" title={authUser.email || 'Signed in'}>
-                {authUser.email || 'Signed in'}
-              </span>
-              {!hasVerifiedAccess(authUser) && (
-                <button className="account-action" type="button" onClick={() => { setCurrentPage('auth'); setMobileNavOpen(false); }}>
-                  Verify email
-                </button>
-              )}
+              {usernameStatus === 'ready'
+                ? <span className="account-username" title={studentUsername}>{studentUsername}</span>
+                : <span className="account-status" role="status">{usernameStatus === 'checking' ? 'Loading account...' : usernameStatus === 'error' ? 'Username unavailable' : 'Username required'}</span>}
               <button className="account-action" type="button" onClick={handleLogout} disabled={logoutPending}>
-                {logoutPending ? 'Signing out...' : 'Log out'}
+                {logoutPending ? 'Signing out...' : 'Sign Out'}
               </button>
             </>
+          ) : authUser ? (
+            <>
+              <button className="account-action" type="button" onClick={() => openAuthPage('login')}>Verify email</button>
+              <button className="account-action" type="button" onClick={handleLogout} disabled={logoutPending}>{logoutPending ? 'Signing out...' : 'Sign Out'}</button>
+            </>
           ) : (
-            <button className="account-action" type="button" onClick={() => { setCurrentPage('auth'); setMobileNavOpen(false); }}>
-              Sign in
-            </button>
+            <button className="auth-nav-link" type="button" onClick={() => openAuthPage('login')}>Sign In</button>
           )}
         </div>
-        <a
+        {!(hasVerifiedAccess(authUser) && currentPage === 'dashboard') && <a
           className="nav-cta"
-          href={currentPage === 'home' ? '#explore' : '#top'}
-          onClick={currentPage !== 'home' ? () => { setCurrentPage('home'); setMobileNavOpen(false); } : undefined}
+          href={!authReady ? '#top' : hasVerifiedAccess(authUser) ? usernameStatus === 'ready' ? pageHashes.dashboard : pageHashes.username : authUser ? pageHashes.login : pageHashes.register}
+          aria-disabled={!authReady || usernameStatus === 'checking'}
+          onClick={(event) => {
+            event.preventDefault();
+            if (!authReady || usernameStatus === 'checking') return;
+            if (hasVerifiedAccess(authUser) && usernameStatus === 'ready') navigate('dashboard');
+            else if (hasVerifiedAccess(authUser)) navigate('username');
+            else openAuthPage(authUser ? 'login' : 'register');
+          }}
         >
-          {currentPage === 'home' ? 'Find your direction' : 'Back to CareerScout'} <span aria-hidden="true">↗</span>
-        </a>
+          {!authReady ? 'Checking sign-in...' : hasVerifiedAccess(authUser) ? usernameStatus === 'ready' ? 'Go to Dashboard' : usernameStatus === 'checking' ? 'Loading account...' : usernameStatus === 'error' ? 'Retry username setup' : 'Choose Username' : authUser ? 'Verify Email' : 'Get Started'} {!authReady || usernameStatus === 'checking' ? null : <span aria-hidden="true">↗</span>}
+        </a>}
       </header>
 
       {authNotice && <p className="auth-global-notice" role="alert">{authNotice}</p>}
 
-      {currentPage === 'profile' && hasVerifiedAccess(authUser) ? (
-        <StudentProfile user={authUser} onRequestSignIn={() => setCurrentPage('auth')} />
+      {!authReady && currentPage !== 'home' ? (
+        <div className="recommendation-state dashboard-state" role="status"><span className="recommendation-spinner" aria-hidden="true" /><p>Checking your sign-in...</p></div>
+      ) : protectedPages.has(currentPage) && !hasVerifiedAccess(authUser) ? (
+        <div className="recommendation-state dashboard-state" role="status"><span className="recommendation-spinner" aria-hidden="true" /><p>Opening sign in...</p></div>
+      ) : hasVerifiedAccess(authUser) && usernameStatus === 'checking' && currentPage !== 'home' ? (
+        <div className="recommendation-state dashboard-state" role="status"><span className="recommendation-spinner" aria-hidden="true" /><p>Loading your student account...</p></div>
+      ) : hasVerifiedAccess(authUser) && usernameStatus !== 'ready' && currentPage !== 'home' && currentPage !== 'username' ? (
+        <div className="recommendation-state dashboard-state" role="status"><span className="recommendation-spinner" aria-hidden="true" /><p>Preparing your student account...</p></div>
+      ) : hasVerifiedAccess(authUser) && usernameStatus === 'error' && currentPage === 'username' ? (
+        <div className="recommendation-state dashboard-state" role="alert">
+          <p>Your username could not be checked. Check your connection, then retry.</p>
+          <button className="button button-secondary" type="button" onClick={() => setUsernameLoadAttempt((attempt) => attempt + 1)}>Retry</button>
+        </div>
+      ) : currentPage === 'username' && hasVerifiedAccess(authUser) && usernameStatus === 'missing' ? (
+        <UsernameSetup
+          user={authUser}
+          onSaved={(username) => {
+            setStudentUsername(username);
+            setUsernameStatus('ready');
+          }}
+        />
+      ) : currentPage === 'dashboard' && hasVerifiedAccess(authUser) ? (
+        <StudentDashboard
+          user={authUser}
+          username={studentUsername}
+          onOpenProfile={() => navigate('profile')}
+          onOpenRecommendations={() => navigate('recommendations')}
+          onContinueLearning={(skill, careerPath) => {
+            setLearningFocus({ skill, careerPath });
+            navigate('learning');
+          }}
+        />
+      ) : currentPage === 'profile' && hasVerifiedAccess(authUser) ? (
+        <StudentProfile user={authUser} onRequestSignIn={() => openAuthPage('login')} />
       ) : currentPage === 'recommendations' && hasVerifiedAccess(authUser) ? (
         <CareerRecommendations
           user={authUser}
-          onOpenProfile={() => setCurrentPage('profile')}
-          onRequestSignIn={() => setCurrentPage('auth')}
+          onOpenProfile={() => navigate('profile')}
+          onRequestSignIn={() => openAuthPage('login')}
+          onContinueLearning={(skill, careerPath) => {
+            setLearningFocus({ skill, careerPath });
+            navigate('learning');
+          }}
         />
       ) : currentPage === 'learning' && hasVerifiedAccess(authUser) ? (
-        <SkillGapLearning user={authUser} onRequestSignIn={() => setCurrentPage('auth')} />
-      ) : currentPage === 'auth' || currentPage === 'profile' ? (
-        <AuthPanel user={authUser} onAuthenticated={handleAuthenticated} />
-      ) : currentPage === 'recommendations' ? (
-        <AuthPanel user={authUser} onAuthenticated={handleAuthenticated} />
-      ) : currentPage === 'learning' ? (
-        <AuthPanel user={authUser} onAuthenticated={handleAuthenticated} />
+        <SkillGapLearning user={authUser} onRequestSignIn={() => openAuthPage('login')} focusSkill={learningFocus.skill} focusCareerPath={learningFocus.careerPath} />
+      ) : currentPage === 'login' || currentPage === 'register' ? (
+        <AuthPanel
+          user={authUser}
+          initialMode={currentPage === 'register' ? 'register' : 'login'}
+          onModeChange={(mode) => navigate(mode === 'register' ? 'register' : 'login')}
+          onAuthenticated={handleAuthenticated}
+        />
       ) : <>
       <section className="hero" id="top">
         <div className="hero-copy">
@@ -248,7 +437,11 @@ function App() {
             Career ideas, practical skills, and real opportunities, brought together to help you figure out what comes next.
           </p>
           <div className="hero-actions">
-            <a className="button button-primary" href="#explore">Get Started <span aria-hidden="true">↗</span></a>
+            <button className="button button-primary" type="button" disabled={!authReady} onClick={() => {
+              if (!authReady) return;
+              if (hasVerifiedAccess(authUser)) navigate('dashboard');
+              else openAuthPage(authUser ? 'login' : 'register');
+            }}>{!authReady ? 'Checking sign-in...' : hasVerifiedAccess(authUser) ? 'Go to Dashboard' : authUser ? 'Verify Email' : 'Get Started'} {authReady && <span aria-hidden="true">↗</span>}</button>
             <a className="button button-secondary" href="#explore">Explore Careers <span aria-hidden="true">↓</span></a>
           </div>
           <div className="hero-note">
@@ -314,14 +507,18 @@ function App() {
           <p className="eyebrow">Your next step starts with you</p>
           <h2 id="home-cta-title">Make your interests a place to begin.</h2>
         </div>
-        <button className="button button-primary" type="button" onClick={() => openProtectedPage('profile', 'your Student Profile')}>
-          Build your profile <span aria-hidden="true">↗</span>
+        <button className="button button-primary" type="button" disabled={!authReady} onClick={() => {
+          if (!authReady) return;
+          if (hasVerifiedAccess(authUser)) navigate('profile');
+          else openAuthPage(authUser ? 'login' : 'register');
+        }}>
+          {!authReady ? 'Checking sign-in...' : hasVerifiedAccess(authUser) ? 'Build your profile' : authUser ? 'Verify your email' : 'Get Started'} {authReady && <span aria-hidden="true">↗</span>}
         </button>
       </section>
       </>}
 
       <footer className="site-footer">
-        <a className="brand footer-brand" href="#top" onClick={() => setCurrentPage('home')}>
+        <a className="brand footer-brand" href="#top" onClick={(event) => { event.preventDefault(); navigate('home'); }}>
           <span className="brand-mark" aria-hidden="true">C</span>
           <span>CareerScout<span className="brand-ai"> AI</span></span>
         </a>

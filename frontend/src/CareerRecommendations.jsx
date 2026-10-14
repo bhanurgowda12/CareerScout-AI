@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { useCareerRecommendations } from './ai.js';
+import CareerExplorer from './CareerExplorer.jsx';
+import { getCareerRole } from './careerCatalog.js';
 import { auth, firestore } from './firebase.js';
 
 function canUseProfile(user) {
@@ -17,6 +19,9 @@ function hasCareerProfileData(profile) {
     || profile?.experienceLevel
     || profile?.skills?.length
     || profile?.interests?.length
+    || profile?.preferredWorkAreas?.length
+    || profile?.preferredIndustries?.length
+    || profile?.careerInterests?.length
     || profile?.projects?.some((project) => project?.name || project?.description || project?.technologies)
     || profile?.certifications?.some((certification) => certification?.name || certification?.issuer),
   );
@@ -54,6 +59,7 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
   const [profileError, setProfileError] = useState('');
   const [profileLoadAttempt, setProfileLoadAttempt] = useState(0);
   const [recommendationSaveError, setRecommendationSaveError] = useState('');
+  const [exploreRoleId, setExploreRoleId] = useState('');
   const { recommendations, loading, error, requestRecommendations } = useCareerRecommendations();
 
   useEffect(() => {
@@ -168,7 +174,15 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
 
           {recommendationSaveError && <p className="recommendation-save-error" role="alert">{recommendationSaveError}</p>}
 
-          {recommendations && !loading && (
+          {recommendations && !loading && recommendations.careerRecommendations.length === 0 && (
+            <div className="recommendation-state recommendation-state--empty">
+              <h2>Add a little more career context</h2>
+              <p>Your saved profile did not match a role strongly enough yet. Add skills, project details, interests, or preferred work areas, or browse the catalogue below.</p>
+              <button className="button button-secondary" type="button" onClick={onOpenProfile}>Update Student Profile <span aria-hidden="true">↗</span></button>
+            </div>
+          )}
+
+          {recommendations && !loading && recommendations.careerRecommendations.length > 0 && (
             <>
               {recommendations.generationMethod === 'rule-based' && (
                 <aside className="recommendation-source-notice">
@@ -192,6 +206,7 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
                       <div>
                         <span className="career-card-number">0{index + 1}</span>
                         <h3>{career.careerPath}</h3>
+                        {career.careerDomain && <p className="career-card-domain">{career.careerDomain}</p>}
                       </div>
                       <span className="career-fit" aria-label={`Directional profile fit ${career.compatibilityScore} out of 100`}>
                         <strong>{career.compatibilityScore}</strong><span>profile fit</span>
@@ -199,6 +214,12 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
                     </header>
 
                     <p className="career-reasoning">{career.whyItSuits}</p>
+
+                    <button
+                      className="button button-secondary career-explore-action"
+                      type="button"
+                      onClick={() => setExploreRoleId(career.careerId || getCareerRole(career.careerPath)?.id || '')}
+                    >Explore This Career <span aria-hidden="true">↗</span></button>
 
                     <div className="career-skill-grid">
                       <section>
@@ -208,10 +229,23 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
                         ) : <p className="recommendation-muted">Your profile does not list direct matches yet.</p>}
                       </section>
                       <section>
+                        <h4>Transferable skills</h4>
+                        {career.transferableSkills?.length ? (
+                          <ul className="recommendation-tags">{career.transferableSkills.map((skill) => <li key={skill}>{skill}</li>)}</ul>
+                        ) : <p className="recommendation-muted">Add project or work-area details to identify more transferable skills.</p>}
+                      </section>
+                      <section>
                         <h4>Skills to develop</h4>
                         <ul className="recommendation-tags recommendation-tags--gap">{career.missingSkills.map((skill) => <li key={skill}>{skill}</li>)}</ul>
                       </section>
                     </div>
+
+                    {career.prerequisites?.length > 0 && (
+                      <section className="career-recommendation-prerequisites">
+                        <h4>Prerequisites to consider</h4>
+                        <ul>{career.prerequisites.map((item) => <li key={item}>{item}</li>)}</ul>
+                      </section>
+                    )}
 
                     <details className="career-detail-disclosure">
                       <summary>Learning roadmap, portfolio idea, and next steps</summary>
@@ -245,6 +279,18 @@ function CareerRecommendations({ user, onOpenProfile, onRequestSignIn }) {
             </>
           )}
         </>
+      )}
+
+      {!profileLoading && !profileError && firestore && (
+        <CareerExplorer
+          user={user}
+          profile={profile || {}}
+          requestedRoleId={exploreRoleId}
+          onContinueLearning={(career) => {
+            const firstSkill = career.skillLearningPlan?.[0]?.skill || '';
+            onContinueLearning?.(firstSkill, career.careerPath);
+          }}
+        />
       )}
     </section>
   );

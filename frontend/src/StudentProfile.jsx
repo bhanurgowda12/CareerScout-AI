@@ -11,9 +11,10 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { auth, firestore } from './firebase.js';
+import { careerDomains } from './careerCatalog.js';
 
 const PROFILE_STORAGE_KEY = 'careerscout-student-profile';
-const careerOptions = [
+const legacyCareerOptions = [
   'AI/Machine Learning',
   'Web Development',
   'Data Science',
@@ -21,10 +22,16 @@ const careerOptions = [
   'Cloud Computing',
   'Mobile App Development',
 ];
+const careerOptions = [...new Set([...legacyCareerOptions, ...careerDomains.map((domain) => domain.label)])];
 const experienceOptions = ['Beginner', 'Intermediate', 'Advanced'];
 
 function createEmptyProfile() {
   return {
+    username: '',
+    preferredWorkAreas: [],
+    preferredIndustries: [],
+    careerInterests: [],
+    selectedCareerPathway: null,
     fullName: '',
     email: '',
     degree: '',
@@ -43,6 +50,13 @@ function normalizeProfile(value) {
   const source = value && typeof value === 'object' ? value : {};
   try {
     return {
+      username: typeof source.username === 'string' ? source.username : '',
+      preferredWorkAreas: Array.isArray(source.preferredWorkAreas) ? source.preferredWorkAreas.filter((item) => typeof item === 'string') : [],
+      preferredIndustries: Array.isArray(source.preferredIndustries) ? source.preferredIndustries.filter((item) => typeof item === 'string') : [],
+      careerInterests: Array.isArray(source.careerInterests) ? source.careerInterests.filter((item) => typeof item === 'string') : [],
+      selectedCareerPathway: source.selectedCareerPathway && typeof source.selectedCareerPathway === 'object'
+        ? { ...source.selectedCareerPathway }
+        : null,
       fullName: typeof source.fullName === 'string' ? source.fullName : '',
       email: typeof source.email === 'string' ? source.email : '',
       degree: typeof source.degree === 'string' ? source.degree : '',
@@ -546,6 +560,16 @@ function StudentProfile({ user, onRequestSignIn }) {
         }
 
         const restored = normalizeProfile(versionSnapshot.data());
+        if (!restored.username && currentSnapshot.exists()) {
+          const currentUsername = currentSnapshot.data().username;
+          restored.username = typeof currentUsername === 'string' ? currentUsername : '';
+        }
+        if (!restored.selectedCareerPathway && currentSnapshot.exists()) {
+          const currentSelection = currentSnapshot.data().selectedCareerPathway;
+          restored.selectedCareerPathway = currentSelection && typeof currentSelection === 'object'
+            ? { ...currentSelection }
+            : null;
+        }
         transaction.set(profileRef, restored);
         return restored;
       });
