@@ -7,6 +7,7 @@ import StudentProfile from './StudentProfile.jsx';
 import CareerRecommendations from './CareerRecommendations.jsx';
 import SkillGapLearning from './SkillGapLearning.jsx';
 import StudentDashboard from './StudentDashboard.jsx';
+import ResumeBuilder from './ResumeBuilder.jsx';
 import UsernameSetup, { isValidUsername } from './UsernameSetup.jsx';
 
 const highlights = [
@@ -45,12 +46,13 @@ const pageHashes = {
   profile: '#student-profile',
   recommendations: '#career-recommendations',
   learning: '#skill-gap-learning',
+  resume: '#resume-builder',
   login: '#sign-in',
   register: '#get-started',
   username: '#choose-username',
 };
 
-const protectedPages = new Set(['dashboard', 'profile', 'recommendations', 'learning', 'username']);
+const protectedPages = new Set(['dashboard', 'profile', 'recommendations', 'learning', 'resume', 'username']);
 
 function getPageFromHash(hash) {
   if (hash === '#top') return 'home';
@@ -395,6 +397,7 @@ function App() {
           user={authUser}
           username={studentUsername}
           onOpenProfile={() => navigate('profile')}
+          onOpenResume={() => navigate('resume')}
           onOpenRecommendations={() => navigate('recommendations')}
           onContinueLearning={(skill, careerPath) => {
             setLearningFocus({ skill, careerPath });
@@ -403,6 +406,8 @@ function App() {
         />
       ) : currentPage === 'profile' && hasVerifiedAccess(authUser) ? (
         <StudentProfile user={authUser} onRequestSignIn={() => openAuthPage('login')} />
+      ) : currentPage === 'resume' && hasVerifiedAccess(authUser) ? (
+        <ResumeBuilder user={authUser} onBack={() => navigate('dashboard')} />
       ) : currentPage === 'recommendations' && hasVerifiedAccess(authUser) ? (
         <CareerRecommendations
           user={authUser}

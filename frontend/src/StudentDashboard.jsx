@@ -41,7 +41,7 @@ function formatDate(date) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
 }
 
-function StudentDashboard({ user, username, onOpenProfile, onOpenRecommendations, onContinueLearning }) {
+function StudentDashboard({ user, username, onOpenProfile, onOpenResume, onOpenRecommendations, onContinueLearning }) {
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -187,7 +187,10 @@ function StudentDashboard({ user, username, onOpenProfile, onOpenRecommendations
           <h1 id="dashboard-title">{studentName ? `Welcome back, ${studentName}.` : 'Welcome to your dashboard.'}</h1>
           <p>See what you have built so far and choose a useful next step.</p>
         </div>
-        <button className="button button-secondary" type="button" onClick={onOpenProfile}>Open Student Profile <span aria-hidden="true">↗</span></button>
+        <div className="dashboard-welcome-actions">
+          <button className="button button-secondary" type="button" onClick={onOpenProfile}>Open Student Profile <span aria-hidden="true">↗</span></button>
+          <button className="button button-primary" type="button" onClick={onOpenResume}>Resume Builder <span aria-hidden="true">↗</span></button>
+        </div>
       </header>
 
       {primaryCareer ? (
