@@ -2,10 +2,9 @@ import React, { useState } from 'react';
 import { updateProfile } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import { auth, firestore } from './firebase.js';
+import { isValidUsername } from './settingsUtils.js';
 
-export function isValidUsername(value) {
-  return typeof value === 'string' && /^[A-Za-z0-9_]{3,20}$/.test(value.trim());
-}
+export { isValidUsername } from './settingsUtils.js';
 
 function UsernameSetup({ user, onSaved }) {
   const [username, setUsername] = useState('');

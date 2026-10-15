@@ -3,12 +3,14 @@ import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import AuthPanel from './AuthPanel.jsx';
 import { auth, firestore } from './firebase.js';
+import SettingsPage from './SettingsPage.jsx';
 import StudentProfile from './StudentProfile.jsx';
 import CareerRecommendations from './CareerRecommendations.jsx';
 import SkillGapLearning from './SkillGapLearning.jsx';
 import StudentDashboard from './StudentDashboard.jsx';
 import ResumeBuilder from './ResumeBuilder.jsx';
 import UsernameSetup, { isValidUsername } from './UsernameSetup.jsx';
+import { readThemePreference, writeThemePreference } from './settingsUtils.js';
 
 const highlights = [
   {
@@ -47,12 +49,13 @@ const pageHashes = {
   recommendations: '#career-recommendations',
   learning: '#skill-gap-learning',
   resume: '#resume-builder',
+  settings: '#settings',
   login: '#sign-in',
   register: '#get-started',
   username: '#choose-username',
 };
 
-const protectedPages = new Set(['dashboard', 'profile', 'recommendations', 'learning', 'resume', 'username']);
+const protectedPages = new Set(['dashboard', 'profile', 'recommendations', 'learning', 'resume', 'settings', 'username']);
 
 function getPageFromHash(hash) {
   if (hash === '#top') return 'home';
@@ -69,6 +72,7 @@ function hasVerifiedAccess(user) {
 function App() {
   const [apiStatus, setApiStatus] = useState('checking');
   const [currentPage, setCurrentPage] = useState(() => getPageFromHash(window.location.hash));
+  const [theme, setTheme] = useState(readThemePreference);
   const [authUser, setAuthUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [studentUsername, setStudentUsername] = useState('');
@@ -91,6 +95,11 @@ function App() {
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    writeThemePreference(theme);
+  }, [theme]);
 
   useEffect(() => {
     if (!auth) {
@@ -317,6 +326,7 @@ function App() {
               <a href={pageHashes.profile} aria-current={currentPage === 'profile' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); openProtectedPage('profile', 'your Student Profile'); }}>Student Profile</a>
               <a href={pageHashes.recommendations} aria-current={currentPage === 'recommendations' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); openProtectedPage('recommendations', 'Career Recommendations'); }}>Career Recommendations</a>
               <a href={pageHashes.learning} aria-current={currentPage === 'learning' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); setLearningFocus({ skill: '', careerPath: '' }); openProtectedPage('learning', 'Skill Gap & Learning Resources'); }}>Skill Gap & Learning Resources</a>
+              <a href={pageHashes.settings} aria-current={currentPage === 'settings' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); openProtectedPage('settings', 'Settings'); }}>Settings</a>
             </>
           )}
         </nav>
@@ -336,24 +346,16 @@ function App() {
           {!authReady ? (
             <span className="account-status" role="status">Checking sign-in...</span>
           ) : hasVerifiedAccess(authUser) ? (
-            <>
-              {usernameStatus === 'ready'
-                ? <span className="account-username" title={studentUsername}>{studentUsername}</span>
-                : <span className="account-status" role="status">{usernameStatus === 'checking' ? 'Loading account...' : usernameStatus === 'error' ? 'Username unavailable' : 'Username required'}</span>}
-              <button className="account-action" type="button" onClick={handleLogout} disabled={logoutPending}>
-                {logoutPending ? 'Signing out...' : 'Sign Out'}
-              </button>
-            </>
+            usernameStatus === 'ready'
+              ? <span className="account-username" title={studentUsername}>{studentUsername}</span>
+              : <span className="account-status" role="status">{usernameStatus === 'checking' ? 'Loading account...' : usernameStatus === 'error' ? 'Username unavailable' : 'Username required'}</span>
           ) : authUser ? (
-            <>
-              <button className="account-action" type="button" onClick={() => openAuthPage('login')}>Verify email</button>
-              <button className="account-action" type="button" onClick={handleLogout} disabled={logoutPending}>{logoutPending ? 'Signing out...' : 'Sign Out'}</button>
-            </>
+            <button className="account-action" type="button" onClick={() => openAuthPage('login')}>Verify email</button>
           ) : (
             <button className="auth-nav-link" type="button" onClick={() => openAuthPage('login')}>Sign In</button>
           )}
         </div>
-        {!(hasVerifiedAccess(authUser) && currentPage === 'dashboard') && <a
+        {!(hasVerifiedAccess(authUser) && (currentPage === 'dashboard' || currentPage === 'profile')) && <a
           className="nav-cta"
           href={!authReady ? '#top' : hasVerifiedAccess(authUser) ? usernameStatus === 'ready' ? pageHashes.dashboard : pageHashes.username : authUser ? pageHashes.login : pageHashes.register}
           aria-disabled={!authReady || usernameStatus === 'checking'}
@@ -398,6 +400,7 @@ function App() {
           username={studentUsername}
           onOpenProfile={() => navigate('profile')}
           onOpenResume={() => navigate('resume')}
+          onOpenSettings={() => navigate('settings')}
           onOpenRecommendations={() => navigate('recommendations')}
           onContinueLearning={(skill, careerPath) => {
             setLearningFocus({ skill, careerPath });
@@ -408,6 +411,16 @@ function App() {
         <StudentProfile user={authUser} onRequestSignIn={() => openAuthPage('login')} />
       ) : currentPage === 'resume' && hasVerifiedAccess(authUser) ? (
         <ResumeBuilder user={authUser} onBack={() => navigate('dashboard')} />
+      ) : currentPage === 'settings' && hasVerifiedAccess(authUser) ? (
+        <SettingsPage
+          user={authUser}
+          username={studentUsername}
+          onUsernameChanged={setStudentUsername}
+          theme={theme}
+          onThemeChange={setTheme}
+          onLogout={handleLogout}
+          logoutPending={logoutPending}
+        />
       ) : currentPage === 'recommendations' && hasVerifiedAccess(authUser) ? (
         <CareerRecommendations
           user={authUser}

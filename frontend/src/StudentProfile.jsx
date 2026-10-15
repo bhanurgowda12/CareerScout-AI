@@ -152,9 +152,9 @@ function formatHistoryDate(timestamp) {
   return timestamp.toDate().toLocaleString();
 }
 
-function ProfileSection({ number, title, description, children }) {
+function ProfileSection({ number, title, description, className = '', children }) {
   return (
-    <section className="profile-section">
+    <section className={`profile-section${className ? ` ${className}` : ''}`}>
       <div className="profile-section-heading">
         <span className="profile-section-number">{number}</span>
         <div>
@@ -705,7 +705,7 @@ function StudentProfile({ user, onRequestSignIn }) {
           </div>
         </ProfileSection>
 
-        <ProfileSection number="02" title="Education" description="Tell us what you are studying.">
+        <ProfileSection number="02" title="Education" description="Tell us what you are studying." className="profile-education-section">
           <div className="form-grid form-grid-two">
             <FormField id="degree" label="Degree" error={errors.degree}>
               <input id="degree" placeholder="e.g. B.Tech" value={profile.degree} onChange={(event) => updateField('degree', event.target.value)} />
@@ -747,7 +747,7 @@ function StudentProfile({ user, onRequestSignIn }) {
           ) : <p className="form-hint">No skills added yet.</p>}
         </ProfileSection>
 
-        <ProfileSection number="04" title="Career interests" description="Choose every area you would like to explore.">
+        <ProfileSection number="04" title="Career interests" description="Choose every area you would like to explore." className="profile-interests-section">
           <div className="choice-grid">
             {careerOptions.map((interest) => (
               <label className={`choice-option${profile.interests.includes(interest) ? ' choice-option--selected' : ''}`} key={interest}>

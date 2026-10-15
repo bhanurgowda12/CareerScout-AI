@@ -41,7 +41,7 @@ function formatDate(date) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
 }
 
-function StudentDashboard({ user, username, onOpenProfile, onOpenResume, onOpenRecommendations, onContinueLearning }) {
+function StudentDashboard({ user, username, onOpenProfile, onOpenResume, onOpenSettings, onOpenRecommendations, onContinueLearning }) {
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -190,6 +190,7 @@ function StudentDashboard({ user, username, onOpenProfile, onOpenResume, onOpenR
         <div className="dashboard-welcome-actions">
           <button className="button button-secondary" type="button" onClick={onOpenProfile}>Open Student Profile <span aria-hidden="true">↗</span></button>
           <button className="button button-primary" type="button" onClick={onOpenResume}>Resume Builder <span aria-hidden="true">↗</span></button>
+          <button className="button button-secondary" type="button" onClick={onOpenSettings}>Settings <span aria-hidden="true">↗</span></button>
         </div>
       </header>
 

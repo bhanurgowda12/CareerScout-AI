@@ -273,7 +273,7 @@ function ResumeBuilder({ user, onBack }) {
             </div>
           </section>
 
-          <section className="resume-editor-section" aria-labelledby="resume-education-title">
+          <section className="resume-editor-section resume-education-section" aria-labelledby="resume-education-title">
             <div className="resume-editor-heading">
               <h2 id="resume-education-title">Education</h2>
               <button className="add-action" type="button" onClick={() => addEntry('education', {
