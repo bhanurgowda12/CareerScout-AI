@@ -9,6 +9,10 @@
   -webkit-font-smoothing: antialiased;
   --ink: #1f2924;
   --muted: #69736d;
+  --ink-subtle: #59665c;
+  --ink-faint: #788079;
+  --surface-tint: #eef1e9;
+  --accent-text: #53644e;
   --paper: #f7f7f2;
   --green: #245c45;
   --lime: #d7ef75;
@@ -112,7 +116,7 @@ h1 span { color: var(--green); font-family: Georgia, serif; font-weight: 400; fo
 .path-card strong { display: block; margin-bottom: 5px; font: 700 16px 'Manrope', sans-serif; }
 .path-card p { margin: 0 0 12px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .skill-row { display: flex; flex-wrap: wrap; gap: 5px; }
-.skill-row span { padding: 5px 7px; border-radius: 2px; background: #eef1e9; color: #53644e; font-size: 8px; }
+.skill-row span { padding: 5px 7px; border-radius: 2px; background: var(--surface-tint); color: var(--accent-text); font-size: 8px; }
 .visual-index { position: absolute; z-index: 1; bottom: 13px; left: 17px; color: #fff; font-size: 9px; letter-spacing: 0.12em; }
 
 .explore-section { padding: 61px max(48px, calc((100% - 1190px) / 2)) 72px; background: #edf0e8; }
@@ -588,7 +592,7 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .highlight:hover { transform: translateY(-3px); border-color: #bacbb8; box-shadow: 0 15px 26px rgb(36 92 69 / 10%); }
 .highlight-number { color: var(--green); }
 .highlight h3 { margin-top: 21px; font-size: 14px; line-height: 1.4; }
-.highlight p { color: #59665c; font-size: 11px; }
+.highlight p { color: var(--ink-subtle); font-size: 11px; }
 .highlight-arrow { top: auto; right: 18px; bottom: 17px; }
 
 .workflow-section { padding: 64px max(48px, calc((100% - 1190px) / 2)); background: #f8f8f2; }
@@ -1079,6 +1083,10 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
   background: #151c17;
   --ink: #e8eee8;
   --muted: #a5b1a7;
+  --ink-subtle: #c0ccc1;
+  --ink-faint: #a5b1a7;
+  --surface-tint: #29392c;
+  --accent-text: #d1e2ce;
   --paper: #151c17;
   --green: #77aa80;
   --lime: #d7ef75;
@@ -1303,6 +1311,59 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 :root[data-theme="dark"] .resume-print-document h1,
 :root[data-theme="dark"] .resume-print-document h2 { color: #111; }
 
+:root[data-theme="dark"] .eyebrow { color: #b2c8ae; }
+:root[data-theme="dark"] .api-status { color: #bac7bc; }
+:root[data-theme="dark"] .api-status--connected { color: #b8d9b8; }
+:root[data-theme="dark"] .api-status--disconnected { color: #f0b7a9; }
+:root[data-theme="dark"] .visual-label { border: 1px solid #45574b; background: rgb(29 42 34 / 96%); color: #e1ebe2; }
+:root[data-theme="dark"] .label-star,
+:root[data-theme="dark"] .highlight-number,
+:root[data-theme="dark"] .highlight-arrow { color: #b2d39f; }
+:root[data-theme="dark"] .highlight p { color: var(--ink-subtle); }
+:root[data-theme="dark"] .path-kicker { color: #bac7bc; }
+:root[data-theme="dark"] .skill-row span { border: 1px solid #4a5d4e; background: var(--surface-tint); color: var(--accent-text); }
+:root[data-theme="dark"] .workflow-steps li > span { color: #b2d39f; }
+:root[data-theme="dark"] .profile-empty-entry p { color: #b8c5ba; }
+:root[data-theme="dark"] .repeatable-item-heading { color: #d1ddd2; }
+:root[data-theme="dark"] .remove-action { color: #f0b7a9; }
+:root[data-theme="dark"] .remove-action:hover { background: #3b2824; }
+:root[data-theme="dark"] .career-card-number { color: #b2d39f; }
+:root[data-theme="dark"] .career-roadmap ol,
+:root[data-theme="dark"] .career-next-steps ol,
+:root[data-theme="dark"] .career-next-steps p { color: #c0ccc1; }
+:root[data-theme="dark"] .roadmap-phase-heading span { color: #a5b1a7; }
+:root[data-theme="dark"] .recommendation-source-notice p { color: #c0ccc1; }
+:root[data-theme="dark"] .skill-gap-state { border-color: var(--line); background: #202a23; }
+:root[data-theme="dark"] .skill-gap-selector label,
+:root[data-theme="dark"] .skill-gap-career-select label { color: #d2ded4; }
+:root[data-theme="dark"] .skill-gap-reason,
+:root[data-theme="dark"] .learning-language-step > .learning-language-note { color: #c0ccc1; }
+:root[data-theme="dark"] .skill-gap-sequence li { color: #d1ddd2; }
+:root[data-theme="dark"] .skill-sequence-number { background: #2d4033; color: #b8d9b8; }
+:root[data-theme="dark"] .skill-priority--beginner { border: 1px solid #4a6850; background: #263b2b; color: #c3e0c2; }
+:root[data-theme="dark"] .skill-priority--intermediate { border: 1px solid #71623c; background: #3a3322; color: #ead7a7; }
+:root[data-theme="dark"] .skill-priority--advanced { border: 1px solid #754b43; background: #3d2925; color: #f0b7a9; }
+:root[data-theme="dark"] .skill-completion-status { border-color: #6c5c3a; background: #39311f; color: #ead7a7; }
+:root[data-theme="dark"] .skill-completion-status--done { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
+:root[data-theme="dark"] .skill-video-heading h5 { color: #dce8de; }
+:root[data-theme="dark"] .learning-language-badge { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
+:root[data-theme="dark"] .skill-gap-error,
+:root[data-theme="dark"] .recommendation-save-error { color: #f0b7a9; }
+:root[data-theme="dark"] .career-explorer-fit { color: #b8d9b8; }
+:root[data-theme="dark"] .career-pathway-choice p,
+:root[data-theme="dark"] .career-project-milestone p,
+:root[data-theme="dark"] .career-resource-note { color: #c0ccc1; }
+:root[data-theme="dark"] .career-explorer-roadmap-heading > span,
+:root[data-theme="dark"] .career-explorer-roadmap > ol > li > div span,
+:root[data-theme="dark"] .career-explorer-roadmap > ol > li > p { color: #a5b1a7; }
+:root[data-theme="dark"] .learning-roadmap-preview > ol > li > div span,
+:root[data-theme="dark"] .learning-roadmap-preview > ol > li > p { color: #bac7bc; }
+:root[data-theme="dark"] .resume-editor .resume-entry-heading { color: #d1ddd2; }
+:root[data-theme="dark"] .resume-editor .remove-action { color: #f0b7a9; }
+:root[data-theme="dark"] .resume-editor .remove-action:hover { background: #3b2824; }
+
 @media print {
   :root[data-theme="dark"] body { background: #fff !important; }
+  :root[data-theme="dark"] .resume-print-document,
+  :root[data-theme="dark"] .resume-print-document * { color: #000 !important; background: #fff !important; }
 }
