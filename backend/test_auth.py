@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlparse
 
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
+from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
 from firebase_admin import exceptions as firebase_exceptions
 
@@ -47,6 +48,13 @@ class FirebaseAuthenticationTests(unittest.TestCase):
             check_revoked=False,
         )
 
+    def test_missing_bearer_token_returns_401(self):
+        with self.assertRaises(HTTPException) as raised:
+            main.require_firebase_user(request=None, credentials=None)
+
+        self.assertEqual(raised.exception.status_code, 401)
+        self.assertEqual(raised.exception.detail["code"], "firebase-sign-in-required")
+
     def test_invalid_token_returns_401(self):
         with self.assertLogs(main.__name__, level="WARNING") as captured_logs:
             with (
@@ -64,6 +72,21 @@ class FirebaseAuthenticationTests(unittest.TestCase):
         self.assertEqual(raised.exception.detail["code"], "firebase-token-invalid")
         self.assertIn("category=invalid-token", captured_logs.output[0])
         self.assertNotIn("test-id-token", captured_logs.output[0])
+
+    def test_malformed_token_returns_401(self):
+        with (
+            patch.object(main, "get_firebase_admin_app", return_value=self.admin_app),
+            patch.object(
+                main.firebase_auth,
+                "verify_id_token",
+                side_effect=firebase_auth.InvalidIdTokenError("Malformed token"),
+            ),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                self.authenticate()
+
+        self.assertEqual(raised.exception.status_code, 401)
+        self.assertEqual(raised.exception.detail["code"], "firebase-token-invalid")
 
     def test_specific_invalid_token_reasons_precede_invalid_token_fallback(self):
         cases = (
@@ -178,6 +201,35 @@ class FirebaseAuthenticationTests(unittest.TestCase):
             for call in urlopen_mock.call_args_list
         ]
         self.assertEqual(queries, ["React tutorial Kannada", "React tutorial English"])
+
+    def test_multiple_skills_use_the_same_protected_authentication_path(self):
+        client = TestClient(main.app)
+        decoded_token = {
+            "uid": "student-123",
+            "email_verified": True,
+            "firebase": {"sign_in_provider": "password"},
+        }
+        with (
+            patch.dict(os.environ, {"YOUTUBE_API_KEY": "test-youtube-key"}),
+            patch.object(main, "get_firebase_admin_app", return_value=self.admin_app),
+            patch.object(main.firebase_auth, "verify_id_token", return_value=decoded_token) as verify,
+            patch.object(main, "urlopen", return_value=self.youtube_response({"items": []})),
+        ):
+            responses = [
+                client.get(
+                    "/api/learning-resources",
+                    params={"skill": skill, "language": "en"},
+                    headers={"Authorization": "Bearer test-id-token"},
+                )
+                for skill in ("React", "HTML", "Accessibility")
+            ]
+
+        self.assertEqual([response.status_code for response in responses], [200, 200, 200])
+        self.assertEqual(verify.call_count, 3)
+        self.assertEqual(
+            [call.args[0] for call in verify.call_args_list],
+            ["test-id-token", "test-id-token", "test-id-token"],
+        )
 
     def test_pagination_token_and_result_limit(self):
         items = [

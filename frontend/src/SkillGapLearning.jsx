@@ -15,6 +15,7 @@ import {
 import { auth, firestore } from './firebase.js';
 import { getCareerProgressDocumentId } from './careerCatalog.js';
 import { getResourceById } from './resourceCatalog.js';
+import { requestLearningResources } from './learningResourcesApi.js';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const LEARNING_LANGUAGES = [
@@ -27,17 +28,6 @@ const LEARNING_LANGUAGES = [
   { code: 'mr', label: 'Marathi (मराठी)' },
   { code: 'bn', label: 'Bengali (বাংলা)' },
 ];
-
-async function requestLearningResources(skill, language, idToken, pageToken) {
-  const parameters = new URLSearchParams({ skill, language });
-  if (pageToken) parameters.set('pageToken', pageToken);
-  const response = await fetch(
-    `${API_BASE_URL}/api/learning-resources?${parameters.toString()}`,
-    { headers: { Authorization: `Bearer ${idToken}` } },
-  );
-  const result = await response.json().catch(() => ({}));
-  return { response, result };
-}
 
 function getSkillsToLearn(career) {
   const skillPlan = Array.isArray(career?.skillLearningPlan)
@@ -258,27 +248,15 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
       if (!currentUser) throw new Error('Sign in again to load learning resources.');
       if (currentUser.uid !== user?.uid) throw new Error('Your sign-in changed. Reload the page and try again.');
 
-      let idToken;
-      try {
-        idToken = await currentUser.getIdToken(true);
-      } catch {
-        throw new Error('Your sign-in could not be verified. Sign in again, then retry.');
-      }
+      const { response, result } = await requestLearningResources(
+        API_BASE_URL,
+        skill,
+        language,
+        currentUser,
+        pageToken,
+      );
       if (generation !== searchGeneration.current) return;
       if (auth?.currentUser?.uid !== currentUser.uid) throw new Error('Your sign-in changed. Reload the page and try again.');
-
-      let { response, result } = await requestLearningResources(skill, language, idToken, pageToken);
-      if (response.status === 401 && result.detail?.code === 'firebase-token-expired') {
-        if (auth?.currentUser?.uid !== currentUser.uid) throw new Error('Your sign-in changed. Reload the page and try again.');
-        try {
-          idToken = await currentUser.getIdToken(true);
-        } catch {
-          throw new Error('Your sign-in could not be refreshed. Sign in again, then retry.');
-        }
-        if (generation !== searchGeneration.current) return;
-        if (auth?.currentUser?.uid !== currentUser.uid) throw new Error('Your sign-in changed. Reload the page and try again.');
-        ({ response, result } = await requestLearningResources(skill, language, idToken, pageToken));
-      }
       if (!response.ok) throw new Error(getResourceErrorMessage(response, result));
       if (generation !== searchGeneration.current) return;
 
