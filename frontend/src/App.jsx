@@ -7,6 +7,7 @@ import SettingsPage from './SettingsPage.jsx';
 import StudentProfile from './StudentProfile.jsx';
 import CareerRecommendations from './CareerRecommendations.jsx';
 import SkillGapLearning from './SkillGapLearning.jsx';
+import JobMatchAnalyzer from './JobMatchAnalyzer.jsx';
 import StudentDashboard from './StudentDashboard.jsx';
 import ResumeBuilder from './ResumeBuilder.jsx';
 import UsernameSetup, { isValidUsername } from './UsernameSetup.jsx';
@@ -48,6 +49,7 @@ const pageHashes = {
   profile: '#student-profile',
   recommendations: '#career-recommendations',
   learning: '#skill-gap-learning',
+  jobMatch: '#job-match-analyzer',
   resume: '#resume-builder',
   settings: '#settings',
   login: '#sign-in',
@@ -55,7 +57,7 @@ const pageHashes = {
   username: '#choose-username',
 };
 
-const protectedPages = new Set(['dashboard', 'profile', 'recommendations', 'learning', 'resume', 'settings', 'username']);
+const protectedPages = new Set(['dashboard', 'profile', 'recommendations', 'learning', 'jobMatch', 'resume', 'settings', 'username']);
 
 function getPageFromHash(hash) {
   if (hash === '#top') return 'home';
@@ -326,6 +328,7 @@ function App() {
               <a href={pageHashes.profile} aria-current={currentPage === 'profile' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); openProtectedPage('profile', 'your Student Profile'); }}>Student Profile</a>
               <a href={pageHashes.recommendations} aria-current={currentPage === 'recommendations' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); openProtectedPage('recommendations', 'Career Recommendations'); }}>Career Recommendations</a>
               <a href={pageHashes.learning} aria-current={currentPage === 'learning' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); setLearningFocus({ skill: '', careerPath: '' }); openProtectedPage('learning', 'Skill Gap & Learning Resources'); }}>Skill Gap & Learning Resources</a>
+              <a href={pageHashes.jobMatch} aria-current={currentPage === 'jobMatch' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); openProtectedPage('jobMatch', 'Job Match Analyzer'); }}>Job Match Analyzer</a>
               <a href={pageHashes.settings} aria-current={currentPage === 'settings' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); openProtectedPage('settings', 'Settings'); }}>Settings</a>
             </>
           )}
@@ -433,6 +436,15 @@ function App() {
         />
       ) : currentPage === 'learning' && hasVerifiedAccess(authUser) ? (
         <SkillGapLearning user={authUser} onRequestSignIn={() => openAuthPage('login')} focusSkill={learningFocus.skill} focusCareerPath={learningFocus.careerPath} />
+      ) : currentPage === 'jobMatch' && hasVerifiedAccess(authUser) ? (
+        <JobMatchAnalyzer
+          user={authUser}
+          onBack={() => navigate('dashboard')}
+          onContinueLearning={(skill) => {
+            setLearningFocus({ skill, careerPath: '' });
+            openProtectedPage('learning', 'Skill Gap & Learning Resources');
+          }}
+        />
       ) : currentPage === 'login' || currentPage === 'register' ? (
         <AuthPanel
           user={authUser}

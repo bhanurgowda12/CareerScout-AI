@@ -5,6 +5,19 @@ const RETRYABLE_AUTH_CODES = new Set([
 
 const refreshesByUser = new WeakMap();
 
+export function isCurrentLearningResourceRequest({
+  requestGeneration,
+  currentGeneration,
+  requestedUserId,
+  currentUserId,
+  requestedSkill,
+  activeSkill,
+}) {
+  return requestGeneration === currentGeneration
+    && requestedUserId === currentUserId
+    && requestedSkill === activeSkill;
+}
+
 async function readIdToken(user, forceRefresh) {
   try {
     const idToken = await user.getIdToken(forceRefresh);

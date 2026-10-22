@@ -15,7 +15,10 @@ import {
 import { auth, firestore } from './firebase.js';
 import { getCareerProgressDocumentId } from './careerCatalog.js';
 import { getResourceById } from './resourceCatalog.js';
-import { requestLearningResources } from './learningResourcesApi.js';
+import {
+  isCurrentLearningResourceRequest,
+  requestLearningResources,
+} from './learningResourcesApi.js';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 const LEARNING_LANGUAGES = [
@@ -50,6 +53,84 @@ function formatSavedDate(timestamp) {
   return timestamp.toDate().toLocaleString();
 }
 
+function SkillLanguageResults({ skill, languages, resourcesBySkill, loadResources }) {
+  return (
+    <div className="skill-language-results">
+      {languages.map((languageCode) => {
+        const language = LEARNING_LANGUAGES.find((item) => item.code === languageCode);
+        const resourceState = resourcesBySkill[skill]?.[languageCode];
+        return (
+          <section className="skill-language-result" key={languageCode}>
+            <div className="skill-video-heading">
+              <h5>{language?.label} learning videos</h5>
+              <span className="learning-language-badge">{languageCode.toUpperCase()}</span>
+            </div>
+            {resourceState?.status === 'loading' && (
+              <div className="learning-video-loading" role="status">
+                <p className="skill-gap-muted">Searching YouTube for {skill}...</p>
+                <div className="learning-video-skeleton-grid" aria-hidden="true">
+                  {[0, 1, 2].map((skeleton) => (
+                    <div className="learning-video-skeleton" key={skeleton}>
+                      <span className="learning-video-skeleton-thumbnail" />
+                      <span className="learning-video-skeleton-line" />
+                      <span className="learning-video-skeleton-line learning-video-skeleton-line--short" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {resourceState?.status === 'error' && (
+              <div className="learning-resource-error">
+                <p className="skill-gap-error" role="alert">{resourceState.message}</p>
+                <button className="small-action" type="button" onClick={() => loadResources(skill, languageCode)}>Retry</button>
+              </div>
+            )}
+            {resourceState?.status === 'loaded' && (
+              <>
+                {resourceState.videos.length ? (
+                  <ul className="youtube-resource-grid">
+                    {resourceState.videos.map((video) => (
+                      <li className="youtube-video-card" key={video.videoId}>
+                        <a className="youtube-video-link" href={video.videoUrl} target="_blank" rel="noreferrer" aria-label={`Watch ${video.title} on YouTube`}>
+                          <span className="youtube-video-thumbnail">
+                            {video.thumbnailUrl
+                              ? <img src={video.thumbnailUrl} alt="" loading="lazy" />
+                              : <span className="youtube-thumbnail-fallback">Video preview</span>}
+                            <span className="youtube-play-mark" aria-hidden="true">▶</span>
+                          </span>
+                          <span className="youtube-video-copy">
+                            <strong>{video.title}</strong>
+                            <small>{video.channelName}</small>
+                            <span className="youtube-watch-action">Watch Video <span aria-hidden="true">↗</span></span>
+                          </span>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                ) : <p className="skill-gap-muted">No learning videos were found for {skill} in {language?.label || languageCode}.</p>}
+                {resourceState.moreError && (
+                  <div className="learning-resource-error">
+                    <p className="skill-gap-error" role="alert">{resourceState.moreError}</p>
+                    <button className="small-action" type="button" onClick={() => loadResources(skill, languageCode, resourceState.nextPageToken)}>Retry</button>
+                  </div>
+                )}
+                <button
+                  className="small-action learning-load-more"
+                  type="button"
+                  disabled={!resourceState.nextPageToken || resourceState.loadingMore}
+                  onClick={() => loadResources(skill, languageCode, resourceState.nextPageToken)}
+                >
+                  {resourceState.loadingMore ? 'Loading videos...' : resourceState.nextPageToken ? 'Load More Videos' : 'No more videos'}
+                </button>
+              </>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function reportRecommendationReadFailure(user, error) {
   if (!import.meta.env.DEV) return;
   console.error('[CareerScout Firestore] Saved career recommendations could not be loaded', {
@@ -77,6 +158,9 @@ function getRecommendationReadErrorMessage(error) {
 }
 
 function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerPath = '' }) {
+  const focusedSkill = typeof focusSkill === 'string' ? focusSkill.trim() : '';
+  const focusedCareerPath = typeof focusCareerPath === 'string' ? focusCareerPath.trim() : '';
+  const focusedSkillMode = Boolean(focusedSkill && !focusedCareerPath);
   const [savedRecommendations, setSavedRecommendations] = useState([]);
   const [recommendationsLoading, setRecommendationsLoading] = useState(true);
   const [recommendationsError, setRecommendationsError] = useState('');
@@ -88,10 +172,21 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
   const [progressError, setProgressError] = useState('');
   const [savingSkill, setSavingSkill] = useState('');
   const [resourcesBySkill, setResourcesBySkill] = useState({});
+  const [resourcesOwnerUid, setResourcesOwnerUid] = useState(user?.uid || '');
   const [selectedLanguages, setSelectedLanguages] = useState([]);
   const [submittedLanguages, setSubmittedLanguages] = useState(null);
   const [languageError, setLanguageError] = useState('');
   const searchGeneration = useRef(0);
+  const inFlightRequests = useRef(new Set());
+  const isMounted = useRef(false);
+
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+      searchGeneration.current += 1;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,6 +195,10 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
       setSavedRecommendations([]);
       setSelectedId('');
       setRecommendationsError('');
+      if (focusedSkillMode) {
+        setRecommendationsLoading(false);
+        return;
+      }
       if (!canUseProfile(user) || auth?.currentUser?.uid !== user.uid || !firestore) {
         setRecommendationsLoading(false);
         setRecommendationsError('Sign in with a verified account to load your saved career recommendations.');
@@ -150,7 +249,7 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
 
     loadSavedRecommendations();
     return () => { cancelled = true; };
-  }, [user?.uid, focusCareerPath]);
+  }, [user?.uid, focusedCareerPath, focusedSkillMode]);
 
   const selectedRecord = useMemo(
     () => savedRecommendations.find((record) => record.id === selectedId) || null,
@@ -158,6 +257,34 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
   );
   const careers = selectedRecord?.careerRecommendations || [];
   const selectedCareer = careers.find((career) => career.careerPath === selectedCareerPath) || careers[0] || null;
+  const activeResourceContext = useRef({});
+  activeResourceContext.current = {
+    userId: user?.uid,
+    focusedSkillMode,
+    skill: focusedSkill,
+    skills: getSkillsToLearn(selectedCareer).map(({ skill }) => skill),
+    languages: submittedLanguages,
+  };
+  const visibleResourcesBySkill = resourcesOwnerUid === user?.uid ? resourcesBySkill : {};
+
+  function isResourceRequestSelected(skill, language) {
+    const activeContext = activeResourceContext.current;
+    return Boolean(activeContext.languages?.includes(language))
+      && (activeContext.focusedSkillMode
+        ? activeContext.skill === skill
+        : activeContext.skills.includes(skill));
+  }
+
+  useEffect(() => {
+    searchGeneration.current += 1;
+    setResourcesBySkill({});
+    setResourcesOwnerUid(user?.uid || '');
+    setSubmittedLanguages(null);
+    setLanguageError('');
+    if (!canUseProfile(user) || auth?.currentUser?.uid !== user.uid) {
+      setSelectedLanguages([]);
+    }
+  }, [focusedSkill, focusedCareerPath, user?.uid]);
 
   useEffect(() => {
     if (!submittedLanguages || !focusSkill || !focusCareerPath || selectedCareerPath !== focusCareerPath) return;
@@ -198,11 +325,14 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
   }, [selectedRecord?.id, selectedCareerPath, user?.uid]);
 
   function updateResource(skill, language, update) {
+    const activeUserId = auth?.currentUser?.uid || '';
+    setResourcesOwnerUid(activeUserId);
     setResourcesBySkill((current) => {
-      const currentSkillResources = current[skill] || {};
+      const userResources = resourcesOwnerUid === activeUserId ? current : {};
+      const currentSkillResources = userResources[skill] || {};
       const previous = currentSkillResources[language];
       return {
-        ...current,
+        ...userResources,
         [skill]: {
           ...currentSkillResources,
           [language]: typeof update === 'function' ? update(previous) : update,
@@ -237,6 +367,31 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
     const existing = resourcesBySkill[skill]?.[language];
     if (!pageToken && !force && ['loading', 'loaded'].includes(existing?.status)) return;
     if (pageToken && existing?.loadingMore) return;
+    const requestKey = JSON.stringify([user?.uid, skill, language, pageToken || '']);
+    const requestIsCurrent = () => {
+      if (!isMounted.current) return false;
+      const activeUserId = auth?.currentUser?.uid;
+      const activeContext = activeResourceContext.current;
+      const selectedInCurrentMode = focusedSkillMode
+        ? activeContext.focusedSkillMode && activeContext.skill === skill
+        : !activeContext.focusedSkillMode && activeContext.skills.includes(skill);
+      const isCurrent = focusedSkillMode
+        ? isCurrentLearningResourceRequest({
+          requestGeneration: generation,
+          currentGeneration: searchGeneration.current,
+          requestedUserId: user?.uid,
+          currentUserId: activeUserId,
+          requestedSkill: skill,
+          activeSkill: activeContext.skill,
+        })
+        : generation === searchGeneration.current && activeUserId === user?.uid;
+      return isCurrent
+        && selectedInCurrentMode
+        && activeContext.userId === activeUserId
+        && isResourceRequestSelected(skill, language);
+    };
+    if (inFlightRequests.current.has(requestKey)) return;
+    inFlightRequests.current.add(requestKey);
     if (pageToken) {
       updateResource(skill, language, (previous) => ({ ...previous, loadingMore: true, moreError: '' }));
     } else {
@@ -255,10 +410,9 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
         currentUser,
         pageToken,
       );
-      if (generation !== searchGeneration.current) return;
-      if (auth?.currentUser?.uid !== currentUser.uid) throw new Error('Your sign-in changed. Reload the page and try again.');
+      if (!requestIsCurrent()) return;
       if (!response.ok) throw new Error(getResourceErrorMessage(response, result));
-      if (generation !== searchGeneration.current) return;
+      if (!requestIsCurrent()) return;
 
       updateResource(skill, language, (previous) => {
         const incomingVideos = Array.isArray(result.videos) ? result.videos : [];
@@ -278,13 +432,24 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
         };
       });
     } catch (error) {
-      if (generation !== searchGeneration.current) return;
+      if (!requestIsCurrent()) return;
       const message = error instanceof Error
         ? error.message
         : 'The learning resources service is unavailable. Check the backend and retry.';
       updateResource(skill, language, (previous) => pageToken
         ? { ...previous, loadingMore: false, moreError: message }
         : { status: 'error', message, videos: [] });
+    } finally {
+      inFlightRequests.current.delete(requestKey);
+      if (
+        isMounted.current
+        && generation !== searchGeneration.current
+        && activeResourceContext.current.userId === user?.uid
+        && auth?.currentUser?.uid === user?.uid
+        && isResourceRequestSelected(skill, language)
+      ) {
+        void loadResources(skill, language, null, searchGeneration.current, true);
+      }
     }
   }
 
@@ -325,6 +490,23 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
     void Promise.all(Array.from({ length: workerCount }, () => runWorker()));
     return () => { searchGeneration.current += 1; };
   }, [submittedLanguages, selectedRecord?.id, selectedCareerPath, user?.uid]);
+
+  useEffect(() => {
+    if (!focusedSkillMode || !submittedLanguages?.length || !canUseProfile(user)) return undefined;
+    const generation = searchGeneration.current;
+    const skill = focusedSkill;
+
+    async function loadFocusedResources() {
+      await Promise.all(submittedLanguages.map((language) => (
+        loadResources(skill, language, null, generation, true)
+      )));
+    }
+
+    void loadFocusedResources();
+    return () => {
+      searchGeneration.current += 1;
+    };
+  }, [focusedSkillMode, focusedSkill, submittedLanguages, user?.uid]);
 
   async function toggleCompleted(skill) {
     if (!selectedRecord || !firestore || auth?.currentUser?.uid !== user?.uid) return;
@@ -367,9 +549,11 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
   return (
     <section className="skill-gap-page" aria-labelledby="skill-gap-title">
       <header className="skill-gap-intro">
-        <p className="eyebrow"><span className="eyebrow-dot" /> Build toward your next role</p>
-        <h1 id="skill-gap-title">Skill gap <span>& learning resources.</span></h1>
-        <p>Choose a saved career path to see its skill sequence, track your progress, and find real YouTube lessons.</p>
+        <p className="eyebrow"><span className="eyebrow-dot" /> {focusedSkillMode ? 'Explore a selected skill' : 'Build toward your next role'}</p>
+        <h1 id="skill-gap-title">{focusedSkillMode ? <>Learning resources for <span>{focusedSkill}</span></> : <>Skill gap <span>& learning resources.</span></>}</h1>
+        <p>{focusedSkillMode
+          ? 'Find learning videos for the skill selected in your job-match analysis.'
+          : 'Choose a saved career path to see its skill sequence, track your progress, and find real YouTube lessons.'}</p>
       </header>
 
       {!canUseProfile(user) ? (
@@ -377,6 +561,60 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
           <p>Sign in with a verified account to access your saved recommendations and learning progress.</p>
           <button className="button button-primary" type="button" onClick={onRequestSignIn}>Sign in</button>
         </div>
+      ) : focusedSkillMode ? (
+        submittedLanguages === null ? (
+          <section className="learning-language-step" aria-labelledby="learning-language-title">
+            <h2 id="learning-language-title">Which language would you like to learn in?</h2>
+            <p>Choose one or more languages to find learning videos for <strong>{focusedSkill}</strong>.</p>
+            <p className="learning-language-note">YouTube language relevance is approximate; check each video for its spoken language.</p>
+            <fieldset className="learning-language-options">
+              <legend className="visually-hidden">Preferred learning languages</legend>
+              {LEARNING_LANGUAGES.map((language) => (
+                <label
+                  className={`learning-language-option${selectedLanguages.includes(language.code) ? ' learning-language-option--selected' : ''}`}
+                  key={language.code}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedLanguages.includes(language.code)}
+                    onChange={() => {
+                      setSelectedLanguages((current) => current.includes(language.code)
+                        ? current.filter((code) => code !== language.code)
+                        : [...current, language.code]);
+                      setLanguageError('');
+                    }}
+                  />
+                  <span>{language.label}</span>
+                </label>
+              ))}
+            </fieldset>
+            {languageError && <p className="skill-gap-error" role="alert">{languageError}</p>}
+            <button className="button button-primary" type="button" onClick={submitLanguageSelection}>
+              Search Learning Videos
+            </button>
+          </section>
+        ) : (
+          <>
+            <div className="learning-language-toolbar">
+              <p>Searching for <strong>{focusedSkill}</strong> in {submittedLanguages.map((code) => LEARNING_LANGUAGES.find((language) => language.code === code)?.label).join(', ')}</p>
+              <button className="button button-secondary" type="button" onClick={changeLanguages}>Change Languages</button>
+            </div>
+            <article className="skill-resource" aria-labelledby="focused-learning-skill-title">
+              <header className="skill-resource-heading">
+                <div className="skill-resource-labels">
+                  <div className="skill-resource-title-line"><h4 id="focused-learning-skill-title">{focusedSkill}</h4><span className="skill-completion-status">Selected skill</span></div>
+                  <span className="skill-gap-muted">Resources are searched directly for this skill; no saved career plan is required.</span>
+                </div>
+              </header>
+              <SkillLanguageResults
+                skill={focusedSkill}
+                languages={submittedLanguages}
+                resourcesBySkill={visibleResourcesBySkill}
+                loadResources={loadResources}
+              />
+            </article>
+          </>
+        )
       ) : !firestore ? (
         <div className="skill-gap-state" role="alert"><p>Firebase is not configured, so saved recommendations and progress are unavailable.</p></div>
       ) : recommendationsLoading ? (
@@ -559,79 +797,12 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
                                   {savingSkill === skill ? 'Saving...' : completed ? 'Completed' : 'Mark as completed'}
                                 </button>
                               </header>
-                              <div className="skill-language-results">
-                                {submittedLanguages.map((languageCode) => {
-                                  const language = LEARNING_LANGUAGES.find((item) => item.code === languageCode);
-                                  const resourceState = resourcesBySkill[skill]?.[languageCode];
-                                  return (
-                                    <section className="skill-language-result" key={languageCode}>
-                                      <div className="skill-video-heading">
-                                        <h5>{language?.label} learning videos</h5>
-                                        <span className="learning-language-badge">{languageCode.toUpperCase()}</span>
-                                      </div>
-                                      {resourceState?.status === 'loading' && (
-                                        <div className="learning-video-loading" role="status">
-                                          <p className="skill-gap-muted">Searching YouTube...</p>
-                                          <div className="learning-video-skeleton-grid" aria-hidden="true">
-                                            {[0, 1, 2].map((skeleton) => (
-                                              <div className="learning-video-skeleton" key={skeleton}>
-                                                <span className="learning-video-skeleton-thumbnail" />
-                                                <span className="learning-video-skeleton-line" />
-                                                <span className="learning-video-skeleton-line learning-video-skeleton-line--short" />
-                                              </div>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      )}
-                                      {resourceState?.status === 'error' && (
-                                        <div className="learning-resource-error">
-                                          <p className="skill-gap-error" role="alert">{resourceState.message}</p>
-                                          <button className="small-action" type="button" onClick={() => loadResources(skill, languageCode)}>Retry</button>
-                                        </div>
-                                      )}
-                                      {resourceState?.status === 'loaded' && (
-                                        <>
-                                          {resourceState.videos.length ? (
-                                            <ul className="youtube-resource-grid">
-                                              {resourceState.videos.map((video) => (
-                                                <li className="youtube-video-card" key={video.videoId}>
-                                                  <a className="youtube-video-link" href={video.videoUrl} target="_blank" rel="noreferrer" aria-label={`Watch ${video.title} on YouTube`}>
-                                                    <span className="youtube-video-thumbnail">
-                                                      {video.thumbnailUrl
-                                                        ? <img src={video.thumbnailUrl} alt="" loading="lazy" />
-                                                        : <span className="youtube-thumbnail-fallback">Video preview</span>}
-                                                      <span className="youtube-play-mark" aria-hidden="true">▶</span>
-                                                    </span>
-                                                    <span className="youtube-video-copy">
-                                                      <strong>{video.title}</strong>
-                                                      <small>{video.channelName}</small>
-                                                      <span className="youtube-watch-action">Watch Video <span aria-hidden="true">↗</span></span>
-                                                    </span>
-                                                  </a>
-                                                </li>
-                                              ))}
-                                            </ul>
-                                          ) : <p className="skill-gap-muted">YouTube returned no videos for this skill and language.</p>}
-                                          {resourceState.moreError && (
-                                            <div className="learning-resource-error">
-                                              <p className="skill-gap-error" role="alert">{resourceState.moreError}</p>
-                                              <button className="small-action" type="button" onClick={() => loadResources(skill, languageCode, resourceState.nextPageToken)}>Retry</button>
-                                            </div>
-                                          )}
-                                          <button
-                                            className="small-action learning-load-more"
-                                            type="button"
-                                            disabled={!resourceState.nextPageToken || resourceState.loadingMore}
-                                            onClick={() => loadResources(skill, languageCode, resourceState.nextPageToken)}
-                                          >
-                                            {resourceState.loadingMore ? 'Loading videos...' : resourceState.nextPageToken ? 'Load More Videos' : 'No more videos'}
-                                          </button>
-                                        </>
-                                      )}
-                                    </section>
-                                  );
-                                })}
-                              </div>
+                              <SkillLanguageResults
+                                skill={skill}
+                                languages={submittedLanguages}
+                                resourcesBySkill={visibleResourcesBySkill}
+                                loadResources={loadResources}
+                              />
                             </article>
                           );
                         })}

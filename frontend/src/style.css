@@ -1362,6 +1362,76 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 :root[data-theme="dark"] .resume-editor .remove-action { color: #f0b7a9; }
 :root[data-theme="dark"] .resume-editor .remove-action:hover { background: #3b2824; }
 
+.job-match-header { margin: 0 0 28px; display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.job-match-intro { max-width: 700px; margin: 0 auto; text-align: center; }
+.job-match-intro .eyebrow { margin-bottom: 13px; }
+.job-match-intro h1 { margin: 0 0 13px; font-size: 43px; }
+.job-match-intro > p:last-child { max-width: 590px; margin: 0 auto; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.job-match-back { flex: 0 0 auto; cursor: pointer; }
+.job-match-form { padding: 24px; display: grid; gap: 23px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-soft); }
+.job-match-field { gap: 9px; }
+.job-match-field label { color: var(--ink); font-size: 12px; }
+.job-match-field label span { color: var(--muted); font-weight: 500; }
+.job-match-field textarea { min-height: 150px; padding: 13px 14px; border-color: var(--line); border-radius: var(--radius-sm); background: var(--paper); color: var(--ink); font: 13px/1.6 'DM Sans', sans-serif; }
+.job-match-field:nth-of-type(2) textarea { min-height: 120px; }
+.job-match-field textarea:focus-visible { outline: 3px solid #6c9b75; outline-offset: 2px; box-shadow: var(--focus-ring); }
+.job-match-field-meta { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.job-match-field-meta span:first-child { max-width: 620px; }
+.job-match-field-meta span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.job-match-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 15px; }
+.job-match-actions .button { border: 0; cursor: pointer; }
+.job-match-actions .button:disabled { cursor: not-allowed; opacity: 0.6; transform: none; }
+.job-match-progress { display: inline-flex; align-items: center; gap: 9px; color: var(--muted); font-size: 11px; }
+.job-match-state { min-height: 150px; padding: 25px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); color: var(--muted); text-align: center; }
+.job-match-state p { max-width: 620px; margin: 0; font-size: 12px; line-height: 1.6; }
+.job-match-state .button { cursor: pointer; }
+.job-match-notice, .job-match-inline-note { margin: 0 0 18px; padding: 13px 16px; border-left: 3px solid var(--green); background: var(--surface-tint); color: var(--ink-subtle); font-size: 11px; line-height: 1.6; }
+.job-match-inline-note { margin: 0; }
+.job-match-error { margin: 0; padding: 12px 14px; border-left: 3px solid #b85d4d; background: #f8ece8; color: #813f33; font-size: 11px; line-height: 1.55; }
+.job-match-error--request { margin-top: 18px; }
+.job-match-results { margin-top: 30px; padding: 25px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-soft); }
+.job-match-results-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.job-match-results-header .eyebrow { margin: 0 0 6px; }
+.job-match-results-header h2 { font-size: 23px; }
+.job-match-score { min-width: 91px; display: flex; flex-direction: column; align-items: flex-end; }
+.job-match-score strong { color: var(--green); font: 700 32px/1.1 'Manrope', sans-serif; }
+.job-match-score span { color: var(--muted); font-size: 10px; }
+.job-match-metrics { padding: 18px 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; border-bottom: 1px solid var(--line); }
+.job-match-metrics div { display: flex; align-items: baseline; gap: 9px; }
+.job-match-metrics strong { color: var(--ink); font: 700 19px 'Manrope', sans-serif; }
+.job-match-metrics span { color: var(--muted); font-size: 11px; }
+.job-match-explanation, .job-match-limitations { margin: 17px 0 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.job-match-skill-groups { margin-top: 23px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.job-match-skill-groups section { min-width: 0; }
+.job-match-skill-groups h3 { margin: 0 0 10px; color: var(--ink); font: 700 13px 'Manrope', sans-serif; }
+.job-match-muted { margin: 0 0 10px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+.job-match-skill-list { margin: 0; padding: 0; display: grid; gap: 8px; list-style: none; }
+.job-match-skill-list li { min-width: 0; padding: 9px 11px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-tint); color: var(--accent-text); font-size: 11px; overflow-wrap: anywhere; }
+.job-match-skill-list--unverified li { background: var(--paper); color: var(--ink-subtle); }
+.job-match-learn { min-height: 31px; padding: 4px 8px; color: var(--green); font-size: 10px; }
+.job-match-limitations { margin-top: 21px; padding-top: 15px; border-top: 1px solid var(--line); }
+:root[data-theme="dark"] .job-match-field textarea { border-color: var(--line); background: #19221c; color: var(--ink); }
+:root[data-theme="dark"] .job-match-error { border-color: #a85b4d; background: #3b2824; color: #f0b7a9; }
+:root[data-theme="dark"] .job-match-state,
+:root[data-theme="dark"] .job-match-form,
+:root[data-theme="dark"] .job-match-results { border-color: var(--line); background: var(--surface); }
+:root[data-theme="dark"] .job-match-notice,
+:root[data-theme="dark"] .job-match-inline-note { color: #c6d7c8; }
+:root[data-theme="dark"] .job-match-skill-list--unverified li { background: #19221c; color: var(--ink-subtle); }
+
+@media (max-width: 620px) {
+  .job-match-header { flex-direction: column; align-items: stretch; gap: 17px; }
+  .job-match-intro { text-align: left; }
+  .job-match-intro h1 { font-size: 35px; }
+  .job-match-intro > p:last-child { margin-left: 0; font-size: 12px; }
+  .job-match-back { align-self: flex-start; }
+  .job-match-form, .job-match-results { padding: 17px; }
+  .job-match-field-meta { flex-direction: column; gap: 4px; }
+  .job-match-skill-groups { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .job-match-metrics { grid-template-columns: minmax(0, 1fr); }
+  .job-match-results-header h2 { font-size: 20px; }
+}
+
 @media print {
   :root[data-theme="dark"] body { background: #fff !important; }
   :root[data-theme="dark"] .resume-print-document,

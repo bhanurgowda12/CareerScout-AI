@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { requestLearningResources } from '../src/learningResourcesApi.js';
+import {
+  isCurrentLearningResourceRequest,
+  requestLearningResources,
+} from '../src/learningResourcesApi.js';
 
 function response(status, body) {
   return {
@@ -108,4 +111,87 @@ test('expired token is refreshed and retried once', async () => {
 
   assert.equal(result.response.status, 200);
   assert.equal(attempts, 2);
+});
+
+test('arbitrary focused skills use the authenticated API in each selected language', async () => {
+  const requested = [];
+  const user = { async getIdToken() { return 'id-token'; } };
+  const fetchRequest = async (url, options) => {
+    requested.push({
+      url: new URL(url),
+      authorization: options.headers.Authorization,
+    });
+    return response(200, { videos: [], nextPageToken: null });
+  };
+
+  const skill = 'Data storytelling & visualization';
+  await Promise.all(['en', 'kn'].map((language) => (
+    requestLearningResources('http://localhost:8000', skill, language, user, null, fetchRequest)
+  )));
+
+  assert.deepEqual(
+    requested.map(({ url }) => [url.searchParams.get('skill'), url.searchParams.get('language')]).sort(),
+    [[skill, 'en'], [skill, 'kn']].sort(),
+  );
+  assert(requested.every(({ authorization }) => authorization.startsWith('Bearer ')));
+});
+
+test('empty resource responses and API errors are returned without fabricated resources', async () => {
+  const user = { async getIdToken() { return 'id-token'; } };
+  const noResults = await requestLearningResources(
+    'http://localhost:8000',
+    'Accessibility Testing',
+    'en',
+    user,
+    null,
+    async () => response(200, { videos: [], nextPageToken: null }),
+  );
+  assert.deepEqual(noResults.result.videos, []);
+
+  const unavailable = await requestLearningResources(
+    'http://localhost:8000',
+    'Accessibility Testing',
+    'en',
+    user,
+    null,
+    async () => response(503, { detail: 'Learning resources are temporarily unavailable.' }),
+  );
+  assert.equal(unavailable.response.status, 503);
+  assert.equal(unavailable.result.detail, 'Learning resources are temporarily unavailable.');
+  assert.equal(unavailable.result.videos, undefined);
+});
+
+test('pagination continues to pass the requested skill and page token through the authenticated helper', async () => {
+  const user = { async getIdToken() { return 'id-token'; } };
+  let requestedUrl;
+  await requestLearningResources(
+    'http://localhost:8000',
+    'Python',
+    'en',
+    user,
+    'next-page-token',
+    async (url) => {
+      requestedUrl = new URL(url);
+      return response(200, { videos: [], nextPageToken: null });
+    },
+  );
+
+  assert.equal(requestedUrl.searchParams.get('skill'), 'Python');
+  assert.equal(requestedUrl.searchParams.get('pageToken'), 'next-page-token');
+});
+
+test('stale focused-skill results are rejected after skill, user, or generation changes', () => {
+  const currentRequest = {
+    requestGeneration: 4,
+    currentGeneration: 4,
+    requestedUserId: 'user-a',
+    currentUserId: 'user-a',
+    requestedSkill: 'Accessibility',
+    activeSkill: 'Accessibility',
+  };
+
+  assert.equal(isCurrentLearningResourceRequest(currentRequest), true);
+  assert.equal(isCurrentLearningResourceRequest({ ...currentRequest, activeSkill: 'Cloud security' }), false);
+  assert.equal(isCurrentLearningResourceRequest({ ...currentRequest, currentUserId: 'user-b' }), false);
+  assert.equal(isCurrentLearningResourceRequest({ ...currentRequest, currentGeneration: 5 }), false);
 });
