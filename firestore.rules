@@ -12,6 +12,61 @@ service cloud.firestore {
           );
       }
 
+      function isValidJobApplication(data) {
+        return data.keys().hasAll([
+            'companyName',
+            'jobTitle',
+            'jobUrl',
+            'location',
+            'employmentType',
+            'status',
+            'dateApplied',
+            'followUpDate',
+            'description',
+            'notes',
+            'dateSaved'
+          ])
+          && data.keys().hasOnly([
+            'companyName',
+            'jobTitle',
+            'jobUrl',
+            'location',
+            'employmentType',
+            'status',
+            'dateApplied',
+            'followUpDate',
+            'description',
+            'notes',
+            'dateSaved'
+          ])
+          && data.companyName is string
+          && data.companyName.size() > 0
+          && data.companyName.size() <= 120
+          && data.jobTitle is string
+          && data.jobTitle.size() > 0
+          && data.jobTitle.size() <= 120
+          && data.jobUrl is string
+          && data.jobUrl.size() <= 2048
+          && data.jobUrl.matches('^$|^https?://[^\\s/?#]+([/?#][^\\s]*)?$')
+          && data.location is string
+          && data.location.size() <= 120
+          && data.employmentType is string
+          && data.employmentType in ['', 'Full-time', 'Part-time', 'Internship', 'Contract', 'Other']
+          && data.status is string
+          && data.status in ['Saved', 'Applied', 'Interview', 'Offer', 'Rejected', 'Withdrawn']
+          && data.dateApplied is string
+          && data.dateApplied.size() <= 10
+          && data.dateApplied.matches('^$|^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && data.followUpDate is string
+          && data.followUpDate.size() <= 10
+          && data.followUpDate.matches('^$|^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && data.description is string
+          && data.description.size() <= 1500
+          && data.notes is string
+          && data.notes.size() <= 2000
+          && data.dateSaved is timestamp;
+      }
+
       match /profile/{profileId} {
         allow read, write: if isVerifiedOwner() && profileId == 'profile';
       }
@@ -26,6 +81,16 @@ service cloud.firestore {
 
       match /skillProgress/{progressId} {
         allow read, write: if isVerifiedOwner();
+      }
+
+      match /jobApplications/{applicationId} {
+        allow get, list: if isVerifiedOwner();
+        allow create: if isVerifiedOwner()
+          && isValidJobApplication(request.resource.data);
+        allow update: if isVerifiedOwner()
+          && isValidJobApplication(request.resource.data)
+          && request.resource.data.dateSaved == resource.data.dateSaved;
+        allow delete: if isVerifiedOwner();
       }
     }
   }
