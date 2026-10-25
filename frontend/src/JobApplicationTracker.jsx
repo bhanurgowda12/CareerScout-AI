@@ -71,15 +71,17 @@ function formFromApplication(application) {
   return Object.fromEntries(Object.keys(emptyForm).map((key) => [key, application[key] || '']));
 }
 
-export function JobApplicationTracker({ user, onBack }) {
+export function JobApplicationTracker({ user, onBack, initialApplication = null }) {
   const [applications, setApplications] = useState([]);
   const [requestUid, setRequestUid] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [formOpen, setFormOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(Boolean(initialApplication));
   const [editingId, setEditingId] = useState('');
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(() => initialApplication
+    ? { ...emptyForm, ...initialApplication, status: 'Saved' }
+    : emptyForm);
   const [fieldErrors, setFieldErrors] = useState({});
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -105,9 +107,11 @@ export function JobApplicationTracker({ user, onBack }) {
     setApplications([]);
     setLoadError('');
     setLoading(true);
-    setFormOpen(false);
+    setFormOpen(Boolean(initialApplication));
     setEditingId('');
-    setForm(emptyForm);
+    setForm(initialApplication
+      ? { ...emptyForm, ...initialApplication, status: 'Saved' }
+      : emptyForm);
     setActionError('');
     setFieldErrors({});
     setFormError('');
@@ -158,7 +162,7 @@ export function JobApplicationTracker({ user, onBack }) {
       });
 
     return () => { cancelled = true; };
-  }, [currentUid, verifiedUser, loadAttempt]);
+  }, [currentUid, verifiedUser, loadAttempt, initialApplication]);
 
   const summary = useMemo(() => getApplicationSummary(applications), [applications]);
   const visibleApplications = useMemo(() => sortApplications(

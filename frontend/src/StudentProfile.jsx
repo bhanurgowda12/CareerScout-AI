@@ -10,8 +10,24 @@ import {
   runTransaction,
   serverTimestamp,
 } from 'firebase/firestore';
-import { auth, firestore } from './firebase.js';
+import {
+  deleteObject,
+  getDownloadURL,
+  ref as storageRef,
+  uploadBytesResumable,
+} from 'firebase/storage';
+import { auth, firestore, storage } from './firebase.js';
 import { careerDomains } from './careerCatalog.js';
+import {
+  isOwnedAvatarPath,
+  MAX_AVATAR_FILE_SIZE,
+  mergeProfileUpdates,
+  normalizeProfileUrl,
+  processAvatarImage,
+  professionalLinkFields,
+  validateAvatarFile,
+  validateProfessionalLinks,
+} from './studentProfileUtils.js';
 
 const PROFILE_STORAGE_KEY = 'careerscout-student-profile';
 const legacyCareerOptions = [
@@ -34,6 +50,13 @@ function createEmptyProfile() {
     selectedCareerPathway: null,
     fullName: '',
     email: '',
+    summary: '',
+    profilePhotoPath: '',
+    linkedin: '',
+    github: '',
+    portfolio: '',
+    leetcode: '',
+    hackerrank: '',
     degree: '',
     branch: '',
     college: '',
@@ -59,6 +82,13 @@ function normalizeProfile(value) {
         : null,
       fullName: typeof source.fullName === 'string' ? source.fullName : '',
       email: typeof source.email === 'string' ? source.email : '',
+      summary: typeof source.summary === 'string' ? source.summary : '',
+      profilePhotoPath: typeof source.profilePhotoPath === 'string' ? source.profilePhotoPath : '',
+      linkedin: typeof source.linkedin === 'string' ? source.linkedin : '',
+      github: typeof source.github === 'string' ? source.github : '',
+      portfolio: typeof source.portfolio === 'string' ? source.portfolio : '',
+      leetcode: typeof source.leetcode === 'string' ? source.leetcode : '',
+      hackerrank: typeof source.hackerrank === 'string' ? source.hackerrank : '',
       degree: typeof source.degree === 'string' ? source.degree : '',
       branch: typeof source.branch === 'string' ? source.branch : '',
       college: typeof source.college === 'string' ? source.college : '',
@@ -66,11 +96,15 @@ function normalizeProfile(value) {
       skills: Array.isArray(source.skills) ? source.skills.filter((item) => typeof item === 'string') : [],
       interests: Array.isArray(source.interests) ? source.interests.filter((item) => typeof item === 'string') : [],
       projects: Array.isArray(source.projects) ? source.projects.map((project) => ({
+        ...(project && typeof project === 'object' ? project : {}),
         name: typeof project?.name === 'string' ? project.name : '',
         description: typeof project?.description === 'string' ? project.description : '',
         technologies: typeof project?.technologies === 'string' ? project.technologies : '',
+        githubUrl: typeof project?.githubUrl === 'string' ? project.githubUrl : '',
+        liveDemoUrl: typeof project?.liveDemoUrl === 'string' ? project.liveDemoUrl : '',
       })) : [],
       certifications: Array.isArray(source.certifications) ? source.certifications.map((certification) => ({
+        ...(certification && typeof certification === 'object' ? certification : {}),
         name: typeof certification?.name === 'string' ? certification.name : '',
         issuer: typeof certification?.issuer === 'string' ? certification.issuer : '',
       })) : [],
@@ -147,9 +181,42 @@ function getProfileErrorMessage(error, operation) {
   return `Your profile ${operation} failed. Please try again.`;
 }
 
+function getAvatarErrorMessage(error, action = 'upload') {
+  if (error?.code === 'storage/unauthorized' || error?.code === 'storage/unauthenticated') {
+    return 'Firebase Storage denied this photo operation. Confirm the owner-only Storage rules are deployed and that your account is verified.';
+  }
+  if (error?.code === 'storage/no-default-bucket' || error?.code === 'storage/bucket-not-found') {
+    return 'The Firebase Storage bucket could not be found. Enable Storage for this project and confirm VITE_FIREBASE_STORAGE_BUCKET is correct.';
+  }
+  if (error?.code === 'storage/canceled') return 'The photo upload was canceled. Your saved profile photo was not changed.';
+  if (error?.code === 'storage/retry-limit-exceeded' || error?.code === 'storage/unknown') {
+    return `The photo ${action === 'load' ? 'could not be loaded' : action === 'delete' ? 'could not be deleted' : 'upload failed'} because of a Storage or network issue. Check your connection and try again.`;
+  }
+  if (action === 'load') return 'The saved profile photo could not be loaded.';
+  if (action === 'delete') return 'The profile photo could not be deleted from Storage.';
+  return 'The profile photo could not be uploaded. Please try again.';
+}
+
+function makeAvatarFilename() {
+  const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `avatar-${id}.jpg`;
+}
+
 function formatHistoryDate(timestamp) {
   if (!timestamp || typeof timestamp.toDate !== 'function') return 'Save time unavailable';
   return timestamp.toDate().toLocaleString();
+}
+
+function getProjectLinks(project) {
+  const candidates = [
+    { label: 'GitHub', value: project?.githubUrl || project?.github },
+    { label: 'Live demo', value: project?.liveDemoUrl || project?.liveDemo || project?.demoUrl },
+  ];
+  return candidates
+    .map((link) => ({ ...link, url: normalizeProfileUrl(link.value) }))
+    .filter((link) => link.url);
 }
 
 function ProfileSection({ number, title, description, className = '', children }) {
@@ -168,17 +235,32 @@ function ProfileSection({ number, title, description, className = '', children }
 }
 
 function FormField({ id, label, error, children }) {
+  const control = React.isValidElement(children)
+    ? React.cloneElement(children, {
+      'aria-invalid': error ? 'true' : undefined,
+      'aria-describedby': error ? `${id}-error` : children.props['aria-describedby'],
+    })
+    : children;
   return (
     <div className={`form-field${error ? ' form-field--error' : ''}`}>
       <label htmlFor={id}>{label}</label>
-      {children}
-      {error && <span className="field-error">{error}</span>}
+      {control}
+      {error && <span className="field-error" id={`${id}-error`}>{error}</span>}
     </div>
   );
 }
 
 function StudentProfile({ user, onRequestSignIn }) {
   const [profile, setProfile] = useState(createEmptyProfile);
+  const [savedProfile, setSavedProfile] = useState(createEmptyProfile);
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState('');
+  const [avatarChange, setAvatarChange] = useState('unchanged');
+  const [pendingAvatar, setPendingAvatar] = useState(null);
+  const [avatarError, setAvatarError] = useState('');
+  const [avatarLoadError, setAvatarLoadError] = useState('');
+  const [avatarProgress, setAvatarProgress] = useState(null);
+  const [avatarImageFailed, setAvatarImageFailed] = useState(false);
   const [errors, setErrors] = useState({});
   const [skillInput, setSkillInput] = useState('');
   const [feedback, setFeedback] = useState({ type: '', message: '' });
@@ -197,12 +279,54 @@ function StudentProfile({ user, onRequestSignIn }) {
   const [loadedUid, setLoadedUid] = useState(null);
   const [loadVersion, setLoadVersion] = useState(0);
   const activeUid = useRef(null);
+  const avatarInput = useRef(null);
+  const avatarUploadTask = useRef(null);
+
+  useEffect(() => () => avatarUploadTask.current?.cancel(), [user?.uid]);
+
+  useEffect(() => {
+    if (!avatarPreviewUrl) return undefined;
+    return () => URL.revokeObjectURL(avatarPreviewUrl);
+  }, [avatarPreviewUrl]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const uid = user?.uid;
+    const path = savedProfile.profilePhotoPath;
+    setAvatarUrl('');
+    setAvatarLoadError('');
+    if (!path) return undefined;
+    if (!storage || !isOwnedAvatarPath(path, uid)) {
+      setAvatarLoadError(storage
+        ? 'The saved profile photo reference is invalid.'
+        : 'Firebase Storage is not configured for profile photos.');
+      return undefined;
+    }
+
+    getDownloadURL(storageRef(storage, path))
+      .then((url) => {
+        if (!cancelled && auth?.currentUser?.uid === uid && activeUid.current === uid) setAvatarUrl(url);
+      })
+      .catch((error) => {
+        if (!cancelled && auth?.currentUser?.uid === uid && activeUid.current === uid) {
+          setAvatarLoadError(getAvatarErrorMessage(error, 'load'));
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [savedProfile.profilePhotoPath, user?.uid]);
 
   useEffect(() => {
     let cancelled = false;
     const uid = user?.uid;
     activeUid.current = uid || null;
     setProfile(createEmptyProfile());
+    setSavedProfile(createEmptyProfile());
+    setAvatarUrl('');
+    setAvatarChange('unchanged');
+    setPendingAvatar(null);
+    setAvatarError('');
+    setAvatarProgress(null);
     setErrors({});
     setSkillInput('');
     setFeedback({ type: '', message: '' });
@@ -236,10 +360,14 @@ function StudentProfile({ user, onRequestSignIn }) {
         if (cancelled || activeUid.current !== uid || auth.currentUser?.uid !== uid) return;
 
         if (snapshot.exists()) {
-          setProfile(normalizeProfile(snapshot.data()));
+          const loadedProfile = normalizeProfile(snapshot.data());
+          setProfile(loadedProfile);
+          setSavedProfile(loadedProfile);
           setCloudProfileExists(true);
         } else {
-          setProfile(createEmptyProfile());
+          const emptyProfile = createEmptyProfile();
+          setProfile(emptyProfile);
+          setSavedProfile(emptyProfile);
           setCloudProfileExists(false);
           setLocalProfile(readLocalProfile());
         }
@@ -331,6 +459,73 @@ function StudentProfile({ user, onRequestSignIn }) {
     setFeedback({ type: '', message: '' });
   }
 
+  async function handleAvatarSelection(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setAvatarError('');
+    setFeedback({ type: '', message: '' });
+    if (!storage || !isCurrentUser()) {
+      setAvatarError('Firebase Storage is not configured or your signed-in account could not be verified.');
+      return;
+    }
+
+    try {
+      const validation = await validateAvatarFile(file);
+      if (!validation.valid) {
+        setAvatarError(validation.error);
+        return;
+      }
+      const processedImage = await processAvatarImage(file);
+      if (!isCurrentUser()) return;
+      if (processedImage.size > 2 * 1024 * 1024) {
+        setAvatarError('The processed photo is still too large to upload. Choose a smaller image.');
+        return;
+      }
+      const preview = URL.createObjectURL(processedImage);
+      setAvatarPreviewUrl(preview);
+      setPendingAvatar(processedImage);
+      setAvatarChange('upload');
+      setAvatarError('');
+    } catch (error) {
+      setAvatarError(error instanceof Error ? error.message : 'The selected image could not be prepared.');
+    }
+  }
+
+  function cancelAvatarChange() {
+    setPendingAvatar(null);
+    setAvatarChange('unchanged');
+    setAvatarPreviewUrl('');
+    setAvatarError('');
+    setAvatarProgress(null);
+  }
+
+  function removeAvatar() {
+    setPendingAvatar(null);
+    setAvatarChange('remove');
+    setAvatarPreviewUrl('');
+    setAvatarError('');
+    setAvatarProgress(null);
+    setFeedback({ type: '', message: '' });
+  }
+
+  function uploadAvatar(uid, imageBlob) {
+    const path = `users/${uid}/profile/${makeAvatarFilename()}`;
+    setAvatarProgress(0);
+    return new Promise((resolve, reject) => {
+      const task = uploadBytesResumable(storageRef(storage, path), imageBlob, {
+        contentType: 'image/jpeg',
+        cacheControl: 'private, max-age=3600',
+      });
+      avatarUploadTask.current = task;
+      task.on('state_changed', (snapshot) => {
+        if (isCurrentUser()) {
+          setAvatarProgress(Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100));
+        }
+      }, reject, () => resolve(path));
+    });
+  }
+
   function updateEntry(collection, index, field, value) {
     setProfile((current) => ({
       ...current,
@@ -338,6 +533,7 @@ function StudentProfile({ user, onRequestSignIn }) {
         entryIndex === index ? { ...entry, [field]: value } : entry
       )),
     }));
+    setErrors((current) => ({ ...current, [`${collection}-${field}-${index}`]: '' }));
     setFeedback({ type: '', message: '' });
   }
 
@@ -359,7 +555,7 @@ function StudentProfile({ user, onRequestSignIn }) {
   }
 
   function validateProfile() {
-    const nextErrors = {};
+    const nextErrors = validateProfessionalLinks(profile);
     const requiredFields = [
       ['fullName', 'Enter your full name.'],
       ['email', 'Enter your email address.'],
@@ -383,6 +579,13 @@ function StudentProfile({ user, onRequestSignIn }) {
     if (profile.interests.length === 0) {
       nextErrors.interests = 'Select at least one career interest.';
     }
+    profile.projects.forEach((project, index) => {
+      ['githubUrl', 'liveDemoUrl'].forEach((field) => {
+        if (project[field]?.trim() && !normalizeProfileUrl(project[field])) {
+          nextErrors[`projects-${field}-${index}`] = 'Enter a valid URL beginning with https://.';
+        }
+      });
+    });
 
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -390,6 +593,7 @@ function StudentProfile({ user, onRequestSignIn }) {
 
   async function saveProfile(event) {
     event.preventDefault();
+    if (saving) return;
     setFeedback({ type: '', message: '' });
     if (!validateProfile()) {
       setFeedback({ type: 'error', message: 'Please review the highlighted fields.' });
@@ -400,36 +604,115 @@ function StudentProfile({ user, onRequestSignIn }) {
       setFeedback({ type: 'error', message: 'Sign in with a verified account and reload your profile before saving.' });
       return;
     }
+    if (avatarChange !== 'unchanged' && !storage) {
+      setAvatarError('Firebase Storage is not configured. Add a Storage bucket and deploy the owner-only Storage rules before changing your profile photo.');
+      setFeedback({ type: 'error', message: 'Your profile photo was not changed. Profile text has not been saved.' });
+      return;
+    }
+    if (avatarChange === 'upload' && !pendingAvatar) {
+      setAvatarError('Choose a valid profile photo before saving.');
+      return;
+    }
 
     setSaving(true);
+    let uploadedAvatarPath = '';
     try {
       const profileRef = getUserProfileRef(user.uid);
       const historyRef = doc(getProfileHistoryCollectionRef(user.uid));
-      const nextProfile = normalizeProfile(profile);
+      const previousAvatarPath = savedProfile.profilePhotoPath;
+      if (avatarChange === 'upload') {
+        uploadedAvatarPath = await uploadAvatar(user.uid, pendingAvatar);
+        if (!isCurrentUser()) throw new Error('Your signed-in account changed during photo upload. Sign in again and retry.');
+      }
+      const normalizedLinks = professionalLinkFields.reduce((links, field) => ({
+        ...links,
+        [field.key]: normalizeProfileUrl(profile[field.key], field.allowHttp),
+      }), {});
+      const nextProfile = normalizeProfile({
+        ...profile,
+        ...normalizedLinks,
+        profilePhotoPath: avatarChange === 'upload'
+          ? uploadedAvatarPath
+          : avatarChange === 'remove'
+            ? ''
+            : savedProfile.profilePhotoPath,
+      });
       await runTransaction(firestore, async (transaction) => {
         const currentSnapshot = await transaction.get(profileRef);
         if (currentSnapshot.exists()) {
           transaction.set(historyRef, {
-            ...normalizeProfile(currentSnapshot.data()),
+            ...currentSnapshot.data(),
+            ...(avatarChange !== 'unchanged' ? { profilePhotoPath: '' } : {}),
             savedAt: serverTimestamp(),
             versionId: historyRef.id,
             changeType: 'before_update',
           });
         }
-        transaction.set(profileRef, nextProfile);
+        transaction.set(profileRef, mergeProfileUpdates(
+          currentSnapshot.exists() ? currentSnapshot.data() : {},
+          nextProfile,
+        ));
       });
       if (isCurrentUser()) {
+        setProfile(nextProfile);
+        setSavedProfile(nextProfile);
         setCloudProfileExists(true);
         setLocalProfile(null);
-        setFeedback({ type: 'success', message: 'Your profile has been saved to your account.' });
+        setAvatarChange('unchanged');
+        setPendingAvatar(null);
+        setAvatarPreviewUrl('');
+        setAvatarProgress(null);
+        let cleanupWarning = '';
+        if (
+          (avatarChange === 'upload' || avatarChange === 'remove')
+          && previousAvatarPath
+          && previousAvatarPath !== nextProfile.profilePhotoPath
+          && isOwnedAvatarPath(previousAvatarPath, user.uid)
+          && !historyLoading
+          && !historyError
+          && !profileHistory.some((version) => version.profilePhotoPath === previousAvatarPath)
+        ) {
+          try {
+            await deleteObject(storageRef(storage, previousAvatarPath));
+          } catch (error) {
+            if (error?.code !== 'storage/object-not-found') {
+              cleanupWarning = ' The profile was saved, but the previous photo could not be removed from Storage.';
+            }
+          }
+        }
+        setAvatarError(cleanupWarning.trim());
+        setFeedback({
+          type: 'success',
+          message: `${avatarChange === 'remove' ? 'Your profile photo was removed and your profile was saved.' : avatarChange === 'upload' ? 'Your profile photo and profile changes were saved.' : 'Your profile has been saved to your account.'}${cleanupWarning}`,
+        });
         await refreshProfileHistory();
       }
     } catch (error) {
-      reportFirestoreFailure('write', 'runTransaction update profile', user, error);
+      let cleanupWarning = '';
+      if (uploadedAvatarPath && storage && isOwnedAvatarPath(uploadedAvatarPath, user.uid)) {
+        try {
+          await deleteObject(storageRef(storage, uploadedAvatarPath));
+        } catch (cleanupError) {
+          if (cleanupError?.code !== 'storage/object-not-found') {
+            cleanupWarning = ' The uploaded replacement could not be cleaned up; your previous profile photo remains active.';
+          }
+        }
+      }
+      if (error?.code?.startsWith('storage/')) {
+        setAvatarError(getAvatarErrorMessage(error));
+      } else {
+        reportFirestoreFailure('write', 'runTransaction update profile', user, error);
+      }
       if (isCurrentUser()) {
-        setFeedback({ type: 'error', message: getProfileErrorMessage(error, 'save') });
+        setFeedback({
+          type: 'error',
+          message: `${error?.code?.startsWith('storage/')
+            ? getAvatarErrorMessage(error)
+            : getProfileErrorMessage(error, 'save')}${cleanupWarning}`,
+        });
       }
     } finally {
+      avatarUploadTask.current = null;
       if (isCurrentUser()) setSaving(false);
     }
   }
@@ -448,12 +731,42 @@ function StudentProfile({ user, onRequestSignIn }) {
       try {
         await deleteDoc(getUserProfileRef(user.uid));
         if (isCurrentUser()) {
-          setProfile(createEmptyProfile());
+          const emptyProfile = createEmptyProfile();
+          let cleanupWarning = '';
+          const avatarReferencedByHistory = profileHistory.some(
+            (version) => version.profilePhotoPath === savedProfile.profilePhotoPath,
+          );
+          if (
+            savedProfile.profilePhotoPath
+            && storage
+            && isOwnedAvatarPath(savedProfile.profilePhotoPath, user.uid)
+            && !avatarReferencedByHistory
+            && !historyLoading
+            && !historyError
+          ) {
+            try {
+              await deleteObject(storageRef(storage, savedProfile.profilePhotoPath));
+            } catch (error) {
+              if (error?.code !== 'storage/object-not-found') {
+                cleanupWarning = ' The profile was deleted, but its photo could not be removed from Storage.';
+              }
+            }
+          } else if (avatarReferencedByHistory) {
+            cleanupWarning = ' The photo was retained because a profile-history version still references it.';
+          }
+            setProfile(emptyProfile);
+            setSavedProfile(emptyProfile);
           setCloudProfileExists(false);
           setLocalProfile(readLocalProfile());
           setErrors({});
           setSkillInput('');
-          setFeedback({ type: 'success', message: 'Your saved cloud profile was deleted.' });
+            setAvatarChange('unchanged');
+            setPendingAvatar(null);
+            setAvatarPreviewUrl('');
+            setAvatarProgress(null);
+            setAvatarUrl('');
+          setAvatarError(cleanupWarning);
+          setFeedback({ type: 'success', message: `Your saved cloud profile was deleted.${cleanupWarning}` });
         }
       } catch (error) {
         reportFirestoreFailure('write', 'deleteDoc profile', user, error);
@@ -469,7 +782,13 @@ function StudentProfile({ user, onRequestSignIn }) {
     const confirmed = window.confirm('Clear the fields currently shown in the form? This will not delete or upload the older profile saved on this device.');
     if (!confirmed) return;
 
-    setProfile(createEmptyProfile());
+    const emptyProfile = createEmptyProfile();
+    setProfile(emptyProfile);
+    setSavedProfile(emptyProfile);
+    setAvatarChange('unchanged');
+    setPendingAvatar(null);
+    setAvatarPreviewUrl('');
+    setAvatarProgress(null);
     setErrors({});
     setSkillInput('');
     setFeedback({ type: 'success', message: 'The form was cleared. No saved profile was deleted.' });
@@ -481,7 +800,7 @@ function StudentProfile({ user, onRequestSignIn }) {
       return;
     }
 
-    const confirmed = window.confirm('Import the profile saved on this device into your signed-in account? This uploads its name, editable email, education, skills, interests, projects, certifications, and experience level. The editable email is profile data only, not your account identity. The import will not overwrite a cloud profile if one already exists.');
+    const confirmed = window.confirm('Import the profile saved on this device into your signed-in account? This uploads its name, editable email, professional summary and links, education, skills, interests, projects, certifications, and experience level. The editable email is profile data only, not your account identity. The import will not overwrite a cloud profile if one already exists.');
     if (!confirmed) return;
 
     setImporting(true);
@@ -502,7 +821,9 @@ function StudentProfile({ user, onRequestSignIn }) {
         const snapshot = await getDoc(profileRef);
         if (!isCurrentUser()) return;
         if (snapshot.exists()) {
-          setProfile(normalizeProfile(snapshot.data()));
+          const existingProfile = normalizeProfile(snapshot.data());
+          setProfile(existingProfile);
+          setSavedProfile(existingProfile);
           setCloudProfileExists(true);
           setLocalProfile(null);
           setFeedback({ type: 'error', message: 'A cloud profile already exists, so the local profile was not imported or used to overwrite it.' });
@@ -510,7 +831,9 @@ function StudentProfile({ user, onRequestSignIn }) {
         return;
       }
 
-      setProfile(normalizeProfile(localProfile));
+      const importedProfile = normalizeProfile(localProfile);
+      setProfile(importedProfile);
+      setSavedProfile(importedProfile);
       setCloudProfileExists(true);
       setLocalProfile(null);
       setFeedback({ type: 'success', message: 'The profile saved on this device was imported into your account. The original local copy was kept.' });
@@ -576,6 +899,7 @@ function StudentProfile({ user, onRequestSignIn }) {
 
       if (!isCurrentUser()) return;
       setProfile(restoredProfile);
+      setSavedProfile(restoredProfile);
       setCloudProfileExists(true);
       setSelectedHistory(null);
       setFeedback({ type: 'success', message: 'The selected version was restored. Your previous current profile was added to history.' });
@@ -602,9 +926,46 @@ function StudentProfile({ user, onRequestSignIn }) {
     setLoadVersion((version) => version + 1);
   }
 
+  function discardChanges() {
+    setProfile(savedProfile);
+    setErrors({});
+    setFeedback({ type: '', message: '' });
+    setSkillInput('');
+    setAvatarChange('unchanged');
+    setPendingAvatar(null);
+    setAvatarError('');
+    setAvatarProgress(null);
+    setAvatarPreviewUrl('');
+  }
+
   const isAuthorized = canUseProfile(user) && auth?.currentUser?.uid === user.uid;
   const isLoaded = loadedUid === user?.uid;
   const isBusy = saving || deleting || importing || Boolean(restoringVersionId);
+  const hasUnsavedChanges = JSON.stringify(profile) !== JSON.stringify(savedProfile) || avatarChange !== 'unchanged';
+  const displayName = savedProfile.fullName.trim() || savedProfile.username.trim();
+  const displayEducation = [
+    savedProfile.degree,
+    savedProfile.branch,
+    savedProfile.college,
+    savedProfile.graduationYear,
+  ].filter((value) => value?.trim());
+  const displayInterests = savedProfile.interests.length
+    ? savedProfile.interests
+    : savedProfile.careerInterests;
+  const savedLinks = professionalLinkFields
+    .map((field) => ({
+      ...field,
+      url: normalizeProfileUrl(savedProfile[field.key], field.allowHttp),
+    }))
+    .filter((field) => field.url);
+  const shownAvatarUrl = avatarChange === 'upload'
+    ? avatarPreviewUrl
+    : avatarChange === 'remove'
+      ? ''
+      : avatarUrl;
+  useEffect(() => {
+    setAvatarImageFailed(false);
+  }, [shownAvatarUrl]);
   const profileEssentials = [
     Boolean(profile.fullName.trim()),
     Boolean(profile.email.trim()),
@@ -644,9 +1005,9 @@ function StudentProfile({ user, onRequestSignIn }) {
   return (
     <section className="profile-page">
       <div className="profile-intro">
-        <p className="eyebrow"><span className="eyebrow-dot" /> Your starting point</p>
-        <h1>Build your <span>student profile.</span></h1>
-        <p>Share a little about your journey so your next steps can feel more like yours.</p>
+        <p className="eyebrow"><span className="eyebrow-dot" /> Your professional profile</p>
+        <h1>{displayName || 'Build your'}{displayName ? '' : <> <span>student profile.</span></>}</h1>
+        <p>Showcase your education, skills, projects, and professional links.</p>
       </div>
 
       {!isAuthorized ? (
@@ -665,12 +1026,156 @@ function StudentProfile({ user, onRequestSignIn }) {
         </div>
       ) : (
         <>
+          <section className="profile-showcase" aria-label="Profile overview">
+            <div className="profile-showcase-header">
+              <div className="profile-avatar-shell">
+                {shownAvatarUrl && !avatarImageFailed ? (
+                  <img
+                    className="profile-avatar"
+                    src={shownAvatarUrl}
+                    alt={`${displayName || 'Student'} profile`}
+                    onError={() => {
+                      setAvatarImageFailed(true);
+                    }}
+                  />
+                ) : (
+                  <span className="profile-avatar" aria-hidden="true">{displayName ? displayName.charAt(0).toUpperCase() : 'S'}</span>
+                )}
+                <div className="profile-photo-controls">
+                  <input
+                    ref={avatarInput}
+                    className="profile-photo-input"
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    aria-label="Choose a profile photo"
+                    aria-invalid={avatarError ? 'true' : undefined}
+                    aria-describedby={avatarError ? 'profile-photo-error' : 'profile-photo-help'}
+                    onChange={handleAvatarSelection}
+                  />
+                  <button className="small-action" type="button" onClick={() => avatarInput.current?.click()} disabled={isBusy}>
+                    {savedProfile.profilePhotoPath ? 'Replace photo' : 'Add photo'}
+                  </button>
+                  {avatarChange !== 'unchanged' ? (
+                    <button className="remove-action" type="button" onClick={cancelAvatarChange} disabled={isBusy}>
+                      {avatarChange === 'remove' ? 'Undo removal' : 'Cancel change'}
+                    </button>
+                  ) : savedProfile.profilePhotoPath ? (
+                    <button className="remove-action" type="button" onClick={removeAvatar} disabled={isBusy}>
+                      Remove photo
+                    </button>
+                  ) : null}
+                </div>
+                {avatarChange === 'upload' && <p className="profile-photo-pending">Preview only · save profile to apply</p>}
+                <p className="profile-photo-help" id="profile-photo-help">JPEG, PNG, or WebP · up to {MAX_AVATAR_FILE_SIZE / (1024 * 1024)} MB</p>
+                {avatarProgress !== null && (
+                  <div className="profile-photo-progress" role="progressbar" aria-label="Profile photo upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={avatarProgress}>
+                    <span style={{ width: `${avatarProgress}%` }} />
+                    <small>{avatarProgress}%</small>
+                  </div>
+                )}
+                {avatarError && <p className="profile-photo-error" id="profile-photo-error" role="alert">{avatarError}</p>}
+                {avatarLoadError && !avatarError && <p className="profile-photo-error" role="status">{avatarLoadError}</p>}
+              </div>
+              <div className="profile-showcase-identity">
+                <h2>{displayName || 'Add your name to get started'}</h2>
+                {displayEducation.length > 0
+                  ? <p>{displayEducation.join(' · ')}</p>
+                  : <p>Education details will appear here when you add them.</p>}
+                <button
+                  className="button button-secondary profile-edit-action"
+                  type="button"
+                  onClick={() => document.getElementById('profile-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                >
+                  Edit profile
+                </button>
+              </div>
+            </div>
+            {savedProfile.summary.trim() && <p className="profile-showcase-summary">{savedProfile.summary}</p>}
+            {displayInterests.length > 0 && (
+              <ul className="profile-showcase-tags" aria-label="Career interests">
+                {displayInterests.map((interest, index) => <li key={`${interest}-${index}`}>{interest}</li>)}
+              </ul>
+            )}
+            {savedProfile.skills.length > 0 && (
+              <div className="profile-showcase-skills">
+                <h3>Skills</h3>
+                <ul className="profile-showcase-tags" aria-label="Saved skills">
+                  {savedProfile.skills.map((skill, index) => <li key={`${skill}-${index}`}>{skill}</li>)}
+                </ul>
+              </div>
+            )}
+            <section className="profile-showcase-links" aria-labelledby="profile-links-title">
+              <div className="profile-showcase-section-heading">
+                <div>
+                  <p className="eyebrow">Connect</p>
+                  <h3 id="profile-links-title">Professional Links</h3>
+                </div>
+              </div>
+              {savedLinks.length > 0 ? (
+                <ul>
+                  {savedLinks.map((link) => (
+                    <li key={link.key}>
+                      <a href={link.url} target="_blank" rel="noopener noreferrer">
+                        <span>{link.label}</span>
+                        <span aria-hidden="true">↗</span>
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="profile-showcase-empty">Add a link below to make your professional work easier to discover.</p>}
+            </section>
+          </section>
+
+          <div className="profile-showcase-details">
+            <section className="profile-showcase-panel" aria-labelledby="profile-projects-title">
+              <h3 id="profile-projects-title">Projects</h3>
+              {savedProfile.projects.some((project) => project.name.trim() || project.description.trim() || project.technologies.trim()) ? (
+                <div className="profile-project-cards">
+                  {savedProfile.projects.filter((project) => project.name.trim() || project.description.trim() || project.technologies.trim()).map((project, index) => (
+                    <article key={`${project.name}-${index}`}>
+                      <h4>{project.name || 'Untitled project'}</h4>
+                      {project.description && <p>{project.description}</p>}
+                      {project.technologies && <span className="profile-project-tech">{project.technologies}</span>}
+                      {getProjectLinks(project).length > 0 && (
+                        <div className="profile-project-links">
+                          {getProjectLinks(project).map((link) => (
+                            <a key={link.label} href={link.url} target="_blank" rel="noopener noreferrer">
+                              {link.label} <span aria-hidden="true">↗</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              ) : <p className="profile-showcase-empty">No projects added yet.</p>}
+            </section>
+            <section className="profile-showcase-panel" aria-labelledby="profile-credentials-title">
+              <h3 id="profile-credentials-title">Education &amp; Certifications</h3>
+              {displayEducation.length > 0 && (
+                <div className="profile-credential-item">
+                  <strong>{[savedProfile.degree, savedProfile.branch].filter(Boolean).join(' · ') || 'Education'}</strong>
+                  <span>{[savedProfile.college, savedProfile.graduationYear].filter(Boolean).join(' · ')}</span>
+                </div>
+              )}
+              {savedProfile.certifications.filter((certification) => certification.name.trim() || certification.issuer.trim()).map((certification, index) => (
+                <div className="profile-credential-item" key={`${certification.name}-${index}`}>
+                  <strong>{certification.name || 'Certification'}</strong>
+                  {certification.issuer && <span>{certification.issuer}</span>}
+                </div>
+              ))}
+              {!displayEducation.length && !savedProfile.certifications.some((certification) => certification.name.trim() || certification.issuer.trim()) && (
+                <p className="profile-showcase-empty">Education and certifications will appear here when added.</p>
+              )}
+            </section>
+          </div>
+
           {localProfile && !cloudProfileExists && (
             <aside className="profile-migration" aria-labelledby="profile-migration-title">
               <h2 id="profile-migration-title">A profile is saved on this device</h2>
               <p>
                 Nothing has been uploaded. You can explicitly import its name, editable email, education,
-                skills, interests, projects, certifications, and experience level into this signed-in account.
+                professional summary and links, skills, interests, projects, certifications, and experience level into this signed-in account.
                 The editable email is profile data, not account identity. An existing cloud profile will never be overwritten.
               </p>
               <button className="button button-secondary" type="button" onClick={importLocalProfile} disabled={isBusy}>
@@ -693,7 +1198,7 @@ function StudentProfile({ user, onRequestSignIn }) {
               : 'Complete the required details below to give your recommendations a stronger starting point.'}</p>
           </section>
 
-          <form className="profile-form" onSubmit={saveProfile} noValidate>
+          <form id="profile-editor" className="profile-form" onSubmit={saveProfile} noValidate>
         <ProfileSection number="01" title="Personal information" description="How should we identify you?">
           <div className="form-grid form-grid-two">
             <FormField id="fullName" label="Full name" error={errors.fullName}>
@@ -702,10 +1207,41 @@ function StudentProfile({ user, onRequestSignIn }) {
             <FormField id="email" label="Email address" error={errors.email}>
               <input id="email" type="email" autoComplete="email" value={profile.email} onChange={(event) => updateField('email', event.target.value)} />
             </FormField>
+            <div className="form-field form-field-wide">
+              <label htmlFor="profile-summary">Professional summary <span>(optional)</span></label>
+              <textarea
+                id="profile-summary"
+                rows="3"
+                maxLength="1200"
+                value={profile.summary}
+                onChange={(event) => updateField('summary', event.target.value)}
+                placeholder="Summarize your interests, strengths, or the work you hope to do."
+              />
+            </div>
           </div>
         </ProfileSection>
 
-        <ProfileSection number="02" title="Education" description="Tell us what you are studying." className="profile-education-section">
+        <ProfileSection number="02" title="Professional Links" description="Add optional links to your professional profiles. Use HTTPS for service profiles." className="profile-links-section">
+          <div className="profile-link-grid">
+            {professionalLinkFields.map((field) => (
+              <FormField key={field.key} id={`profile-link-${field.key}`} label={field.label} error={errors[field.key]}>
+                <input
+                  id={`profile-link-${field.key}`}
+                  type="url"
+                  inputMode="url"
+                  autoComplete="url"
+                  maxLength={2048}
+                  placeholder={field.key === 'portfolio' ? 'https://yourname.dev' : `https://${field.key === 'linkedin' ? 'www.linkedin.com/in/yourname' : field.key === 'github' ? 'github.com/yourname' : `${field.key}.com/yourname`}`}
+                  value={profile[field.key]}
+                  onChange={(event) => updateField(field.key, event.target.value)}
+                />
+              </FormField>
+            ))}
+          </div>
+          <p className="form-hint">Portfolio links may use HTTP to retain compatibility with existing personal sites. Other profile links must use HTTPS.</p>
+        </ProfileSection>
+
+        <ProfileSection number="03" title="Education" description="Tell us what you are studying." className="profile-education-section">
           <div className="form-grid form-grid-two">
             <FormField id="degree" label="Degree" error={errors.degree}>
               <input id="degree" placeholder="e.g. B.Tech" value={profile.degree} onChange={(event) => updateField('degree', event.target.value)} />
@@ -722,7 +1258,7 @@ function StudentProfile({ user, onRequestSignIn }) {
           </div>
         </ProfileSection>
 
-        <ProfileSection number="03" title="Technical skills" description="Add skills you have practiced or are learning.">
+        <ProfileSection number="04" title="Technical skills" description="Add skills you have practiced or are learning.">
           <div className="skill-entry">
             <input
               aria-label="Add a technical skill"
@@ -747,7 +1283,7 @@ function StudentProfile({ user, onRequestSignIn }) {
           ) : <p className="form-hint">No skills added yet.</p>}
         </ProfileSection>
 
-        <ProfileSection number="04" title="Career interests" description="Choose every area you would like to explore." className="profile-interests-section">
+        <ProfileSection number="05" title="Career interests" description="Choose every area you would like to explore." className="profile-interests-section">
           <div className="choice-grid">
             {careerOptions.map((interest) => (
               <label className={`choice-option${profile.interests.includes(interest) ? ' choice-option--selected' : ''}`} key={interest}>
@@ -760,7 +1296,7 @@ function StudentProfile({ user, onRequestSignIn }) {
           {errors.interests && <span className="field-error">{errors.interests}</span>}
         </ProfileSection>
 
-        <ProfileSection number="05" title="Projects" description="Add projects that show what you can do.">
+        <ProfileSection number="06" title="Projects" description="Add projects that show what you can do.">
           {profile.projects.length === 0 && (
             <div className="profile-empty-entry">
               <strong>No projects added yet</strong>
@@ -781,6 +1317,26 @@ function StudentProfile({ user, onRequestSignIn }) {
                   <FormField id={`project-tech-${index}`} label="Technologies used">
                     <input id={`project-tech-${index}`} placeholder="e.g. React, Python" value={project.technologies} onChange={(event) => updateEntry('projects', index, 'technologies', event.target.value)} />
                   </FormField>
+                  <FormField id={`project-github-${index}`} label="GitHub repository URL" error={errors[`projects-githubUrl-${index}`]}>
+                    <input
+                      id={`project-github-${index}`}
+                      type="url"
+                      inputMode="url"
+                      maxLength={2048}
+                      value={project.githubUrl || ''}
+                      onChange={(event) => updateEntry('projects', index, 'githubUrl', event.target.value)}
+                    />
+                  </FormField>
+                  <FormField id={`project-demo-${index}`} label="Live demo URL" error={errors[`projects-liveDemoUrl-${index}`]}>
+                    <input
+                      id={`project-demo-${index}`}
+                      type="url"
+                      inputMode="url"
+                      maxLength={2048}
+                      value={project.liveDemoUrl || ''}
+                      onChange={(event) => updateEntry('projects', index, 'liveDemoUrl', event.target.value)}
+                    />
+                  </FormField>
                   <div className="form-field form-field-wide">
                     <label htmlFor={`project-description-${index}`}>Project description</label>
                     <textarea id={`project-description-${index}`} rows="3" value={project.description} onChange={(event) => updateEntry('projects', index, 'description', event.target.value)} />
@@ -792,7 +1348,7 @@ function StudentProfile({ user, onRequestSignIn }) {
           <button className="add-action" type="button" onClick={addProject}><span aria-hidden="true">+</span> Add project</button>
         </ProfileSection>
 
-        <ProfileSection number="06" title="Certifications" description="Include courses or certifications you have completed.">
+        <ProfileSection number="07" title="Certifications" description="Include courses or certifications you have completed.">
           {profile.certifications.length === 0 && (
             <div className="profile-empty-entry">
               <strong>No certifications added yet</strong>
@@ -820,7 +1376,7 @@ function StudentProfile({ user, onRequestSignIn }) {
           <button className="add-action" type="button" onClick={addCertification}><span aria-hidden="true">+</span> Add certification</button>
         </ProfileSection>
 
-        <ProfileSection number="07" title="Experience level" description="Choose the option that best describes your current experience.">
+        <ProfileSection number="08" title="Experience level" description="Choose the option that best describes your current experience.">
           <FormField id="experienceLevel" label="Current level" error={errors.experienceLevel}>
             <select id="experienceLevel" value={profile.experienceLevel} onChange={(event) => updateField('experienceLevel', event.target.value)}>
               <option value="">Select your experience level</option>
@@ -834,6 +1390,11 @@ function StudentProfile({ user, onRequestSignIn }) {
             {feedback.message && <span className={`feedback-message feedback-message--${feedback.type}`}>{feedback.message}</span>}
           </div>
           <div className="profile-action-buttons">
+            {hasUnsavedChanges && (
+              <button className="button button-secondary" type="button" onClick={discardChanges} disabled={isBusy}>
+                Discard changes
+              </button>
+            )}
             <button className="button button-secondary" type="button" onClick={resetProfile} disabled={isBusy}>
               {deleting ? 'Deleting profile...' : cloudProfileExists ? 'Delete Saved Profile' : 'Reset Form'}
             </button>

@@ -1,10 +1,15 @@
 import json
 import logging
 import os
+import re
 import socket
+import threading
+import time
+from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode, quote, urlparse
 from urllib.request import Request as URLRequest, urlopen
 
 import firebase_admin
@@ -25,6 +30,11 @@ logging.getLogger(__name__).warning(
 )
 
 app = FastAPI(title="CareerScout AI API")
+additional_cors_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.environ.get("CAREERSCOUT_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -32,6 +42,7 @@ app.add_middleware(
         "http://localhost:5174",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
+        *additional_cors_origins,
     ],
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
@@ -47,6 +58,158 @@ YOUTUBE_LANGUAGES = {
     "mr": "Marathi",
     "bn": "Bengali",
 }
+REMOTIVE_API_URL = "https://remotive.com/api/remote-jobs?limit=100"
+REMOTIVE_CACHE_SECONDS = 8 * 60 * 60
+REMOTIVE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+REMOTIVE_MAX_RESULTS = 50
+_job_cache = {"jobs": None, "fetched_at": None, "expires_at": 0.0}
+_job_cache_lock = threading.Lock()
+
+
+class _JobDescriptionParser(HTMLParser):
+    _BLOCK_TAGS = {"br", "div", "li", "p", "tr"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.hidden_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style"}:
+            self.hidden_depth += 1
+        elif not self.hidden_depth and tag in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in {"script", "style"} and self.hidden_depth:
+            self.hidden_depth -= 1
+        elif not self.hidden_depth and tag in self._BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.hidden_depth:
+            self.parts.append(data)
+
+
+def _plain_job_description(value):
+    if not isinstance(value, str):
+        return ""
+    parser = _JobDescriptionParser()
+    parser.feed(value[:50000])
+    return re.sub(r"\n{3,}", "\n\n", "".join(parser.parts)).strip()[:20000]
+
+
+def _normalize_remotive_job(item):
+    if not isinstance(item, dict):
+        return None
+
+    title = item.get("title")
+    company = item.get("company_name")
+    url = item.get("url")
+    if not all(isinstance(value, str) and value.strip() for value in (title, company, url)):
+        return None
+
+    try:
+        parsed_url = urlparse(url.strip())
+    except ValueError:
+        return None
+    host = (parsed_url.hostname or "").lower()
+    if parsed_url.scheme != "https" or not (host == "remotive.com" or host.endswith(".remotive.com")):
+        return None
+
+    def optional_text(key, max_length=500):
+        value = item.get(key)
+        return value.strip()[:max_length] if isinstance(value, str) else ""
+
+    return {
+        "id": str(item.get("id", ""))[:100],
+        "title": title.strip()[:200],
+        "company": company.strip()[:200],
+        "location": optional_text("candidate_required_location"),
+        "publicationDate": optional_text("publication_date", 40),
+        "description": _plain_job_description(item.get("description")),
+        "url": url.strip()[:2048],
+        "category": optional_text("category"),
+        "employmentType": optional_text("job_type", 100),
+        "isRemote": True,
+        "source": "Remotive",
+    }
+
+
+def _get_remotive_jobs():
+    now = time.monotonic()
+    if _job_cache["jobs"] is not None and now < _job_cache["expires_at"]:
+        return _job_cache["jobs"], _job_cache["fetched_at"], True
+
+    with _job_cache_lock:
+        now = time.monotonic()
+        if _job_cache["jobs"] is not None and now < _job_cache["expires_at"]:
+            return _job_cache["jobs"], _job_cache["fetched_at"], True
+
+        request = URLRequest(
+            REMOTIVE_API_URL,
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "CareerScout-AI/1.0 (job discovery; https://remotive.com)",
+            },
+        )
+        try:
+            with urlopen(request, timeout=10) as response:
+                body = response.read(REMOTIVE_MAX_RESPONSE_BYTES + 1)
+        except HTTPError as error:
+            logging.getLogger(__name__).warning(
+                "Remotive job search failed: status=%s", error.code
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Remote job listings are temporarily unavailable. Please try again later.",
+            ) from error
+        except (URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError) as error:
+            logging.getLogger(__name__).warning(
+                "Remotive job search failed: exception_type=%s",
+                _safe_exception_type(error),
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Remote job listings are temporarily unavailable. Please try again later.",
+            ) from error
+
+        if len(body) > REMOTIVE_MAX_RESPONSE_BYTES:
+            raise HTTPException(
+                status_code=502,
+                detail="The remote job provider returned an invalid response.",
+            )
+        try:
+            payload = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise HTTPException(
+                status_code=502,
+                detail="The remote job provider returned an invalid response.",
+            ) from error
+
+        if not isinstance(payload, dict) or not isinstance(payload.get("jobs"), list):
+            raise HTTPException(
+                status_code=502,
+                detail="The remote job provider returned an invalid response.",
+            )
+
+        jobs = [
+            job for job in (_normalize_remotive_job(item) for item in payload["jobs"])
+            if job is not None
+        ][:100]
+        if payload["jobs"] and not jobs:
+            raise HTTPException(
+                status_code=502,
+                detail="The remote job provider returned an invalid response.",
+            )
+
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        _job_cache.update(
+            jobs=jobs,
+            fetched_at=fetched_at,
+            expires_at=time.monotonic() + REMOTIVE_CACHE_SECONDS,
+        )
+        return jobs, fetched_at, False
 
 
 _SAFE_EXCEPTION_TYPES = {
@@ -457,6 +620,36 @@ def read_root():
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "message": "CareerScout AI API is running."}
+
+
+@app.get("/api/job-discovery")
+def get_job_discovery(
+    query: str | None = Query(default=None, max_length=100),
+    category: str | None = Query(default=None, max_length=100),
+    remote_only: bool = Query(default=False, alias="remoteOnly"),
+    limit: int = Query(default=30, ge=1, le=REMOTIVE_MAX_RESULTS),
+):
+    jobs, fetched_at, cached = _get_remotive_jobs()
+    search_terms = (query or "").strip().casefold().split()
+    selected_category = (category or "").strip().casefold()
+    filtered_jobs = [
+        job for job in jobs
+        if (not search_terms or all(
+            term in " ".join((
+                job["title"],
+                job["description"],
+            )).casefold()
+            for term in search_terms
+        ))
+        and (not selected_category or job["category"].casefold() == selected_category)
+        and (not remote_only or job["isRemote"])
+    ]
+    return {
+        "jobs": filtered_jobs[:limit],
+        "fetchedAt": fetched_at,
+        "cached": cached,
+        "source": "Remotive",
+    }
 
 
 @app.get("/api/learning-resources")

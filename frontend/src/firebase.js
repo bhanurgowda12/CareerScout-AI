@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -44,4 +45,16 @@ export const auth = firebaseApp
 
 export const firestore = firebaseApp
   ? getFirestore(firebaseApp)
+  : null;
+
+const storageBucket = typeof firebaseConfig.storageBucket === 'string'
+  ? firebaseConfig.storageBucket.trim()
+  : '';
+const storageBucketUrl = storageBucket.startsWith('gs://')
+  ? storageBucket
+  : `gs://${storageBucket}`;
+
+export const storage = firebaseApp && typeof firebaseConfig.storageBucket === 'string'
+  && storageBucket
+  ? getStorage(firebaseApp, storageBucketUrl)
   : null;

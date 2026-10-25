@@ -1,0 +1,27 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isVerifiedOwner(userId) {
+      return request.auth != null
+        && request.auth.uid == userId
+        && (
+          request.auth.token.email_verified == true
+          || request.auth.token.firebase.sign_in_provider == 'google.com'
+        );
+    }
+
+    match /users/{userId}/profile/{avatarName} {
+      function isAvatarFile() {
+        return avatarName.matches('^avatar-[A-Za-z0-9-]+\\.jpg$');
+      }
+
+      allow read: if isVerifiedOwner(userId) && isAvatarFile();
+      allow create, update: if isVerifiedOwner(userId)
+        && isAvatarFile()
+        && request.resource.size <= 2 * 1024 * 1024
+        && request.resource.contentType == 'image/jpeg';
+      allow delete: if isVerifiedOwner(userId) && isAvatarFile();
+    }
+  }
+}

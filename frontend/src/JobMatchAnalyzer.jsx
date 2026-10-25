@@ -58,14 +58,16 @@ function getProfileLoadError(error) {
   return 'Your saved profile could not be loaded. Check your connection and try again.';
 }
 
-export function JobMatchAnalyzer({ user, onBack, onContinueLearning }) {
+export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobDescription = '' }) {
   const [profile, setProfile] = useState(null);
   const [profileUid, setProfileUid] = useState('');
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileMissing, setProfileMissing] = useState(false);
   const [profileError, setProfileError] = useState('');
   const [profileLoadAttempt, setProfileLoadAttempt] = useState(0);
-  const [jobDescription, setJobDescription] = useState('');
+  const [jobDescription, setJobDescription] = useState(() => (
+    typeof initialJobDescription === 'string' ? initialJobDescription : ''
+  ));
   const [resumeText, setResumeText] = useState('');
   const [formError, setFormError] = useState('');
   const [analysisError, setAnalysisError] = useState('');

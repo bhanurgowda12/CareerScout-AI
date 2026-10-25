@@ -41,7 +41,7 @@ function formatDate(date) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date);
 }
 
-function StudentDashboard({ user, username, onOpenProfile, onOpenResume, onOpenSettings, onOpenRecommendations, onOpenJobTracker, onContinueLearning }) {
+function StudentDashboard({ user, username, onOpenProfile, onOpenResume, onOpenSettings, onOpenRecommendations, onOpenJobTracker, onOpenJobDiscovery, onOpenJobMatch, onContinueLearning }) {
   const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -182,30 +182,39 @@ function StudentDashboard({ user, username, onOpenProfile, onOpenResume, onOpenS
   return (
     <section className="dashboard-page" aria-labelledby="dashboard-title">
       <header className="dashboard-welcome">
-        <div>
-          <p className="eyebrow"><span className="eyebrow-dot" /> Your progress, in one place</p>
-          <h1 id="dashboard-title">{studentName ? `Welcome back, ${studentName}.` : 'Welcome to your dashboard.'}</h1>
-          <p>See what you have built so far and choose a useful next step.</p>
-        </div>
-        <div className="dashboard-welcome-actions">
-          <button className="button button-secondary" type="button" onClick={onOpenProfile}>Open Student Profile <span aria-hidden="true">↗</span></button>
-          <button className="button button-secondary" type="button" onClick={onOpenJobTracker}>Job Application Tracker <span aria-hidden="true">↗</span></button>
-          <button className="button button-primary" type="button" onClick={onOpenResume}>Resume Builder <span aria-hidden="true">↗</span></button>
-          <button className="button button-secondary" type="button" onClick={onOpenSettings}>Settings <span aria-hidden="true">↗</span></button>
+        <div className="dashboard-welcome-copy">
+          <p className="eyebrow"><span className="eyebrow-dot" /> Your career workspace</p>
+          <h1 id="dashboard-title">{studentName ? `Welcome back, ${studentName}` : 'Welcome to your dashboard'}</h1>
+          <p>Your career journey, organized in one place.</p>
         </div>
       </header>
 
       {primaryCareer ? (
         <aside className="dashboard-current-pathway">
-          <div><span>Current pathway</span><strong>{primaryCareer.careerPath}{primaryCareer.pathwayName ? ` — ${primaryCareer.pathwayName}` : ''}</strong><small>{primaryCareer.careerDomain || 'Saved career plan'}</small></div>
-          <button className="button button-secondary" type="button" onClick={() => onContinueLearning(nextSkills[0]?.skill || '', primaryCareer.careerPath)}>Open saved roadmap <span aria-hidden="true">↗</span></button>
+          <div>
+            <span>Current pathway</span>
+            <strong>{primaryCareer.careerPath}{primaryCareer.pathwayName ? ` — ${primaryCareer.pathwayName}` : ''}</strong>
+            <small>{primaryCareer.careerDomain || 'Saved career plan'}</small>
+          </div>
+          <button className="button button-secondary" type="button" onClick={() => onContinueLearning(nextSkills[0]?.skill || '', primaryCareer.careerPath)}>Open roadmap <span aria-hidden="true">↗</span></button>
         </aside>
       ) : (
         <aside className="dashboard-current-pathway dashboard-current-pathway--empty">
-          <div><span>No current pathway</span><strong>Explore careers that connect to your profile.</strong><small>Your saved recommendations and learning roadmap will appear here.</small></div>
+          <div>
+            <span>No current pathway</span>
+            <strong>Explore careers that connect to your profile.</strong>
+            <small>Your saved recommendations and learning roadmap will appear here.</small>
+          </div>
           <button className="button button-primary" type="button" onClick={onOpenRecommendations}>Explore careers <span aria-hidden="true">↗</span></button>
         </aside>
       )}
+
+      <section className="dashboard-quick-actions" aria-label="Quick actions">
+        <button className="button button-secondary" type="button" onClick={onOpenJobDiscovery}>Discover Jobs <span aria-hidden="true">↗</span></button>
+        <button className="button button-secondary" type="button" onClick={onOpenJobMatch}>Analyze Job Match <span aria-hidden="true">↗</span></button>
+        <button className="button button-primary" type="button" onClick={onOpenResume}>Build Resume <span aria-hidden="true">↗</span></button>
+        <button className="button button-secondary" type="button" onClick={() => onContinueLearning(nextSkills[0]?.skill || '', primaryCareer?.careerPath || '')}>Continue Learning <span aria-hidden="true">↗</span></button>
+      </section>
 
       <div className="dashboard-summary" aria-label="Career and learning summary">
         <article className="dashboard-metric">
@@ -216,6 +225,81 @@ function StudentDashboard({ user, username, onOpenProfile, onOpenResume, onOpenS
         <article className="dashboard-metric"><span>Career paths</span><strong>{recommendations.length}</strong><small>Saved distinct paths</small></article>
         <article className="dashboard-metric"><span>Skills completed</span><strong>{completedSkills.length}<small> / {roadmapSkills.length}</small></strong><small>{primaryCareer?.pathwayName || primaryCareer?.careerPath || 'Saved learning roadmap'}</small></article>
         <article className="dashboard-metric"><span>Learning progress</span><strong>{completionPercent}%</strong><progress value={completionPercent} max="100" aria-label={`Learning ${completionPercent}% complete`} /></article>
+      </div>
+
+      <div className="dashboard-feature-groups">
+        <section className="dashboard-section" aria-labelledby="dashboard-growth-title">
+          <div className="dashboard-section-heading">
+            <div>
+              <p className="eyebrow">Career Growth</p>
+              <h2 id="dashboard-growth-title">Build your direction</h2>
+            </div>
+          </div>
+          <div className="dashboard-mini-grid">
+            <button type="button" className="dashboard-mini-card" onClick={onOpenRecommendations}>
+              <span className="mini-card-kicker">Career recommendations</span>
+              <strong>Explore careers</strong>
+              <small>See personalized paths connected to your profile.</small>
+            </button>
+            <button type="button" className="dashboard-mini-card" onClick={onOpenProfile}>
+              <span className="mini-card-kicker">Student profile</span>
+              <strong>Update profile</strong>
+              <small>Keep your goals, interests, and evidence current.</small>
+            </button>
+            <button type="button" className="dashboard-mini-card" onClick={() => onContinueLearning(nextSkills[0]?.skill || '', primaryCareer?.careerPath || '')}>
+              <span className="mini-card-kicker">Skill development</span>
+              <strong>Continue learning</strong>
+              <small>Focus on the next skill that moves your plan forward.</small>
+            </button>
+          </div>
+        </section>
+
+        <section className="dashboard-section" aria-labelledby="dashboard-search-title">
+          <div className="dashboard-section-heading">
+            <div>
+              <p className="eyebrow">Job Search</p>
+              <h2 id="dashboard-search-title">Act on opportunities</h2>
+            </div>
+          </div>
+          <div className="dashboard-mini-grid">
+            <button type="button" className="dashboard-mini-card" onClick={onOpenJobDiscovery}>
+              <span className="mini-card-kicker">Job discovery</span>
+              <strong>Find roles</strong>
+              <small>Explore relevant work that matches your direction.</small>
+            </button>
+            <button type="button" className="dashboard-mini-card" onClick={onOpenJobMatch}>
+              <span className="mini-card-kicker">AI job match</span>
+              <strong>Analyze fit</strong>
+              <small>Compare roles against your background and skills.</small>
+            </button>
+            <button type="button" className="dashboard-mini-card" onClick={onOpenJobTracker}>
+              <span className="mini-card-kicker">Tracker</span>
+              <strong>Track applications</strong>
+              <small>Stay organized across interviews, follow-ups, and status changes.</small>
+            </button>
+          </div>
+        </section>
+
+        <section className="dashboard-section" aria-labelledby="dashboard-prep-title">
+          <div className="dashboard-section-heading">
+            <div>
+              <p className="eyebrow">Career Preparation</p>
+              <h2 id="dashboard-prep-title">Sharpen your materials</h2>
+            </div>
+          </div>
+          <div className="dashboard-mini-grid">
+            <button type="button" className="dashboard-mini-card" onClick={onOpenResume}>
+              <span className="mini-card-kicker">Resume</span>
+              <strong>Build resume</strong>
+              <small>Keep tailored versions ready for the roles you want.</small>
+            </button>
+            <button type="button" className="dashboard-mini-card" onClick={() => onContinueLearning(nextSkills[0]?.skill || '', primaryCareer?.careerPath || '')}>
+              <span className="mini-card-kicker">Learning</span>
+              <strong>Keep learning</strong>
+              <small>Turn insight into visible progress with focused practice.</small>
+            </button>
+          </div>
+        </section>
       </div>
 
       <div className="dashboard-columns">
