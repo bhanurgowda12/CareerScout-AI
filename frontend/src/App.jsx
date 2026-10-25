@@ -507,7 +507,12 @@ function App() {
               ) : currentPage === 'jobDiscovery' && hasVerifiedAccess(authUser) ? (
                 <JobDiscovery
                   key={authUser.uid}
+                  user={authUser}
                   onBack={() => navigate('dashboard')}
+                  onContinueLearning={(skill) => {
+                    setLearningFocus({ skill, careerPath: '' });
+                    openProtectedPage('learning', 'Skill Gap & Learning Resources');
+                  }}
                   onAnalyzeJob={(listing) => {
                     setDiscoveryListing(listing);
                     setTrackerPrefill(null);
@@ -658,7 +663,12 @@ function App() {
           ) : currentPage === 'jobDiscovery' && hasVerifiedAccess(authUser) ? (
             <JobDiscovery
               key={authUser.uid}
+              user={authUser}
               onBack={() => navigate('dashboard')}
+              onContinueLearning={(skill) => {
+                setLearningFocus({ skill, careerPath: '' });
+                openProtectedPage('learning', 'Skill Gap & Learning Resources');
+              }}
               onAnalyzeJob={(listing) => {
                 setDiscoveryListing(listing);
                 setTrackerPrefill(null);
