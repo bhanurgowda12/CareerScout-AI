@@ -7,7 +7,7 @@ CareerScout AI is a student-focused project for exploring career paths, identify
 
 - Node.js 18 or newer and npm
 - Python 3.10 or newer
-- A Firebase project that you own or are authorized to use
+- A Firebase project that you own or are authorized to use 
 
 ## Configure Firebase and Gemini
 
