@@ -2,9 +2,35 @@ import { EMPLOYMENT_TYPES, MAX_DESCRIPTION_LENGTH, isValidHttpUrl } from './jobA
 
 export const MAX_JOB_SEARCH_LENGTH = 100;
 export const MAX_JOB_LOCATION_LENGTH = 120;
+export const JOB_SKILLS = [
+  'Python',
+  'Java',
+  'JavaScript',
+  'TypeScript',
+  'React',
+  'Angular',
+  'Node.js',
+  'HTML',
+  'CSS',
+  'SQL',
+  'MongoDB',
+  'Firebase',
+  'AWS',
+  'Docker',
+  'Kubernetes',
+  'Git',
+  'Machine Learning',
+  'Data Science',
+];
 
 export const JOB_CATEGORIES = [
   { id: 'software-development', label: 'Software Development', roles: [
+    { title: 'Python Developer', synonyms: ['Python Engineer', 'Python Programmer', 'Python Software Developer'] },
+    { title: 'Java Developer', synonyms: ['Java Engineer', 'Java Programmer', 'Java Software Developer'] },
+    { title: 'JavaScript Developer', synonyms: ['JavaScript Engineer', 'JavaScript Programmer', 'JS Developer'] },
+    { title: 'React Developer', synonyms: ['React Engineer', 'React.js Developer', 'React Frontend Developer'] },
+    { title: 'Angular Developer', synonyms: ['Angular Engineer', 'Angular.js Developer'] },
+    { title: 'Node.js Developer', synonyms: ['Node.js Engineer', 'Node Developer', 'Node.js Backend Developer'] },
     { title: 'Frontend Developer', synonyms: ['Frontend Engineer', 'Front-End Developer', 'UI Developer'] },
     { title: 'Backend Developer', synonyms: ['Backend Engineer', 'Back-End Developer', 'API Developer'] },
     { title: 'Full Stack Developer', synonyms: ['Full-Stack Engineer', 'Full Stack Software Engineer', 'Frontend and Backend Software Engineer'] },
@@ -215,29 +241,101 @@ export function getAllJobRoles() {
   })));
 }
 
+const UNRESTRICTED_ROLE_VALUES = new Set([
+  'all type job',
+  'all types job',
+  'all type jobs',
+  'all types jobs',
+  'all job type',
+  'all job types',
+  'all types of job',
+  'all types of jobs',
+  'all jobs',
+  'all roles',
+  'any job',
+  'any role',
+]);
+
+export function isUnrestrictedJobRole(roleTitle) {
+  return !normalizeSearchText(roleTitle)
+    || UNRESTRICTED_ROLE_VALUES.has(normalizeSearchText(roleTitle));
+}
+
+function isUnrestrictedSkill(skill) {
+  return ['any skill', 'any skills', 'all skills'].includes(normalizeSearchText(skill));
+}
+
 export function getRoleSearchTerms(roleTitle) {
+  if (isUnrestrictedJobRole(roleTitle)) return [];
   const normalizedTitle = normalizeSearchText(roleTitle);
   const role = getAllJobRoles().find((item) => normalizeSearchText(item.title) === normalizedTitle);
   return role ? [role.title, ...role.synonyms] : (roleTitle ? [roleTitle] : []);
 }
 
-export function matchesJobSelections(listing, { categories = [], role = '', query = '' } = {}) {
-  const haystack = normalizeSearchText([listing?.title, listing?.description, listing?.category].join(' '));
+export function getCategorySearchTerms(categoryIds = []) {
+  const terms = new Map();
+  for (const categoryId of categoryIds) {
+    const category = JOB_CATEGORIES.find((item) => item.id === categoryId);
+    if (category?.label) terms.set(normalizeSearchText(category.label), category.label);
+    for (const item of category?.roles || []) {
+      for (const term of [item.title, ...item.synonyms]) {
+        const normalized = normalizeSearchText(term);
+        if (normalized && !terms.has(normalized)) terms.set(normalized, term);
+      }
+    }
+  }
+  return [...terms.values()];
+}
+
+function getListingSearchText(listing) {
+  const skills = Array.isArray(listing?.skills)
+    ? listing.skills.filter((skill) => typeof skill === 'string')
+    : [];
+  return normalizeSearchText([
+    listing?.title,
+    listing?.description,
+    listing?.category,
+    ...skills,
+  ].filter((value) => typeof value === 'string').join(' '));
+}
+
+function matchesSearchTerm(text, term) {
+  const normalizedText = normalizeSearchText(text);
+  const normalizedTerm = normalizeSearchText(term);
+  if (!normalizedText || !normalizedTerm) return false;
+  const escapedTerm = normalizedTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escapedTerm}($|[^\\p{L}\\p{N}])`, 'u')
+    .test(normalizedText);
+}
+
+export function matchesJobSelections(listing, {
+  categories = [],
+  role = '',
+  query = '',
+  skills = [],
+} = {}) {
+  const haystack = getListingSearchText(listing);
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery && !normalizedQuery.split(/\s+/).every((term) => haystack.includes(term))) return false;
 
-  if (role) {
-    return getRoleSearchTerms(role).some((term) => {
-      const normalizedTerm = normalizeSearchText(term);
-      return normalizedTerm && haystack.includes(normalizedTerm);
-    });
+  const selectedSkills = skills.filter((skill) => normalizeSearchText(skill) && !isUnrestrictedSkill(skill));
+  if (selectedSkills.length && !selectedSkills.some((skill) => matchesSearchTerm(haystack, skill))) return false;
+
+  if (!isUnrestrictedJobRole(role)) {
+    return getRoleSearchTerms(role).some((term) => matchesSearchTerm(haystack, term));
   }
-  if (categories.length) {
-    return categories.some((categoryId) => {
+  const selectedCategories = categories.filter((categoryId) => (
+    typeof categoryId === 'string'
+      && normalizeSearchText(categoryId)
+      && !UNRESTRICTED_ROLE_VALUES.has(normalizeSearchText(categoryId))
+  ));
+  if (selectedCategories.length) {
+    return selectedCategories.some((categoryId) => {
       const category = JOB_CATEGORIES.find((item) => item.id === categoryId);
-      return category?.roles.some((item) => [item.title, ...item.synonyms].some((term) => (
-        haystack.includes(normalizeSearchText(term))
-      )));
+      return (category?.label && matchesSearchTerm(haystack, category.label))
+        || category?.roles.some((item) => [item.title, ...item.synonyms].some((term) => (
+        matchesSearchTerm(haystack, term)
+        )));
     });
   }
   return true;
@@ -269,7 +367,7 @@ export function filterDiscoveryListings(listings, { query = '', remoteOnly = fal
   return listings.filter((listing) => {
     if (!isValidDiscoveryListing(listing)) return false;
     if (remoteOnly && listing.isRemote === false) return false;
-    const searchableText = normalizeSearchText([listing.title, listing.description].filter(Boolean).join(' '));
+    const searchableText = getListingSearchText(listing);
     return !normalizedQuery || normalizedQuery.split(/\s+/).every((term) => searchableText.includes(term));
   });
 }
@@ -299,6 +397,7 @@ export function filterAndSortDiscoveryListings(listings, filters = {}) {
     workMode = 'Any work mode',
     categories = [],
     role = '',
+    skills = [],
     company = '',
     experience = 'All opportunities',
     employment = 'Any employment',
@@ -307,19 +406,19 @@ export function filterAndSortDiscoveryListings(listings, filters = {}) {
   } = filters;
   const result = deduplicateDiscoveryListings(listings).filter((listing) => {
     if (!filterDiscoveryListings([listing], { query, remoteOnly }).length) return false;
-    if (!matchesJobSelections(listing, { categories, role })) return false;
+    if (!matchesJobSelections(listing, { categories, role, skills })) return false;
     if (company && !normalizeSearchText(listing.company).includes(normalizeSearchText(company))) return false;
-    const normalizedLocation = normalizeSearchText(listing.location);
     const normalizedRequestedLocation = normalizeSearchText(location);
     if (normalizedRequestedLocation && !getLocationMatch(listing, location)) return false;
-    if (workMode !== 'Any work mode' && listing.workMode) {
-      if (normalizeSearchText(listing.workMode) !== normalizeSearchText(workMode)) return false;
-    } else if (workMode === 'Remote' && listing.isRemote === false) {
-      return false;
+    if (normalizeSearchText(workMode) && normalizeSearchText(workMode) !== 'any work mode') {
+      const knownWorkMode = getKnownWorkMode(listing);
+      if (knownWorkMode && knownWorkMode !== workMode) return false;
     }
-    if (employment !== 'Any employment' && listing.employmentType
-      && normalizeSearchText(listing.employmentType) !== normalizeSearchText(employment)) return false;
-    if (experience !== 'All opportunities') {
+    if (normalizeSearchText(employment) && normalizeSearchText(employment) !== 'any employment') {
+      const knownEmploymentTypes = getKnownEmploymentTypes(listing);
+      if (knownEmploymentTypes.length && !knownEmploymentTypes.includes(employment)) return false;
+    }
+    if (normalizeSearchText(experience) && normalizeSearchText(experience) !== 'all opportunities') {
       const classification = getExperienceClassification(listing);
       if (experience === 'Internships' && !['Internship', 'Not stated'].includes(classification)) return false;
       if (['Freshers & graduates', 'Entry-level jobs'].includes(experience)
@@ -359,6 +458,31 @@ export function getExperienceClassification(listing) {
   }
   if (/\b(senior|principal|staff engineer|lead engineer|manager|experienced|mid level)\b/.test(`${explicit} ${title}`)) return 'Experienced';
   return 'Not stated';
+}
+
+export function getKnownWorkMode(listing) {
+  const supplied = normalizeSearchText(listing?.workMode);
+  if (matchesSearchTerm(supplied, 'Hybrid')) return 'Hybrid';
+  if (matchesSearchTerm(supplied, 'Remote')) return 'Remote';
+  if (['on site', 'onsite', 'in person'].some((term) => matchesSearchTerm(supplied, term))) return 'On-site';
+  if (listing?.isRemote === true) return 'Remote';
+  if (listing?.isRemote === false) return 'On-site';
+  return '';
+}
+
+const EMPLOYMENT_TYPE_TERMS = [
+  { label: 'Full-time', terms: ['full-time', 'full time', 'fulltime'] },
+  { label: 'Part-time', terms: ['part-time', 'part time', 'parttime'] },
+  { label: 'Internship', terms: ['internship', 'intern'] },
+  { label: 'Contract', terms: ['contract', 'contractor'] },
+];
+
+export function getKnownEmploymentTypes(listing) {
+  const supplied = normalizeSearchText(listing?.employmentType);
+  if (!supplied) return [];
+  return EMPLOYMENT_TYPE_TERMS
+    .filter(({ terms }) => terms.some((term) => matchesSearchTerm(supplied, term)))
+    .map(({ label }) => label);
 }
 
 export function getLocationMatch(listing, requestedLocation) {

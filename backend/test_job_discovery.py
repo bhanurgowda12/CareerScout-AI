@@ -119,6 +119,133 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
             ["Senior Full-Stack Engineer"],
         )
 
+    def test_role_aliases_match_titles_descriptions_and_categories_without_partial_java_matches(self):
+        jobs = [
+            main._normalize_remotive_job(self.listing(
+                id=1,
+                title="Python Engineer",
+                url="https://remotive.com/jobs/python-engineer",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=2,
+                title="JavaScript Developer",
+                url="https://remotive.com/jobs/javascript-developer",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=3,
+                title="Platform Developer",
+                description="<p>Work with a Java Engineer to build services.</p>",
+                url="https://remotive.com/jobs/java-description",
+            )),
+        ]
+        with patch.object(main, "_get_remotive_jobs", return_value=(jobs, "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                python_response = self.client.get(
+                    "/api/job-discovery?roleTerms=Python+Developer&roleTerms=Python+Engineer"
+                )
+                java_response = self.client.get(
+                    "/api/job-discovery?roleTerms=Java+Developer&roleTerms=Java+Engineer"
+                )
+
+        self.assertEqual([job["title"] for job in python_response.json()["jobs"]], ["Python Engineer"])
+        self.assertEqual([job["title"] for job in java_response.json()["jobs"]], ["Platform Developer"])
+
+    def test_category_filter_matches_terms_across_listing_text_and_supports_multiple_categories(self):
+        jobs = [
+            main._normalize_remotive_job(self.listing(
+                id=1,
+                title="Platform Engineer",
+                description="<p>Build React applications with a React Engineer.</p>",
+                url="https://remotive.com/jobs/react-description",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=2,
+                title="Analyst",
+                category="Data Scientist",
+                url="https://remotive.com/jobs/data-category",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=3,
+                title="Finance Analyst",
+                description="<p>Prepare monthly reports.</p>",
+                category="Finance",
+                url="https://remotive.com/jobs/finance",
+            )),
+        ]
+        with patch.object(main, "_get_remotive_jobs", return_value=(jobs, "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                response = self.client.get(
+                    "/api/job-discovery?category=React+Engineer&category=Data+Scientist"
+                )
+
+        self.assertEqual(
+            [job["title"] for job in response.json()["jobs"]],
+            ["Platform Engineer", "Analyst"],
+        )
+
+    def test_skill_filters_match_title_description_category_and_provider_tags(self):
+        jobs = [
+            main._normalize_remotive_job(self.listing(
+                id=1,
+                title="Python Developer",
+                description="",
+                tags=[],
+                url="https://remotive.com/jobs/python-title",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=2,
+                title="Frontend Engineer",
+                description="<p>Build with TypeScript.</p>",
+                tags=[],
+                url="https://remotive.com/jobs/typescript-description",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=3,
+                title="Analyst",
+                description="",
+                category="Data Science",
+                tags=[],
+                url="https://remotive.com/jobs/data-category",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=4,
+                title="Backend Engineer",
+                description="",
+                tags=["MongoDB"],
+                url="https://remotive.com/jobs/mongodb-tag",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=5,
+                title="JavaScript Developer",
+                description="",
+                tags=[],
+                url="https://remotive.com/jobs/javascript-only",
+            )),
+        ]
+        with patch.object(main, "_get_remotive_jobs", return_value=(jobs, "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                title_match = self.client.get("/api/job-discovery?skills=Python").json()["jobs"]
+                description_match = self.client.get("/api/job-discovery?skills=TypeScript").json()["jobs"]
+                category_match = self.client.get("/api/job-discovery?skills=Data+Science").json()["jobs"]
+                tag_match = self.client.get("/api/job-discovery?skills=MongoDB").json()["jobs"]
+                java_match = self.client.get("/api/job-discovery?skills=Java").json()["jobs"]
+                any_selected_match = self.client.get(
+                    "/api/job-discovery?skills=Python&skills=MongoDB"
+                ).json()["jobs"]
+                post_search = self.client.post(
+                    "/api/job-discovery",
+                    json={"category": ["Backend Engineer"], "skills": ["MongoDB"], "limit": 500},
+                )
+
+        self.assertEqual([job["title"] for job in title_match], ["Python Developer"])
+        self.assertEqual([job["title"] for job in description_match], ["Frontend Engineer"])
+        self.assertEqual([job["title"] for job in category_match], ["Analyst"])
+        self.assertEqual([job["title"] for job in tag_match], ["Backend Engineer"])
+        self.assertEqual(java_match, [])
+        self.assertEqual([job["title"] for job in any_selected_match], ["Python Developer", "Backend Engineer"])
+        self.assertEqual(post_search.status_code, 200)
+        self.assertEqual([job["title"] for job in post_search.json()["jobs"]], ["Backend Engineer"])
+
     def test_expired_cache_refresh_failure_is_not_reported_as_empty_results(self):
         main._job_cache.update(
             jobs=[main._normalize_remotive_job(self.listing())],
@@ -369,6 +496,93 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
         self.assertEqual(response.json()["totalRetrieved"], 2)
         self.assertEqual({item["name"] for item in response.json()["providerStatus"]}, {"Remotive", "Jobicy"})
 
+    def test_unrestricted_post_search_and_default_role_labels_keep_provider_listings(self):
+        remotive_job = main._normalize_remotive_job(self.listing(
+            id=7001,
+            title="Python Developer",
+            url="https://remotive.com/jobs/python-developer-7001",
+        ))
+        jobicy_job = main._normalize_jobicy_job(self.jobicy_listing(
+            id=7002,
+            jobTitle="Java Developer",
+            url="https://jobicy.com/jobs/java-developer-7002",
+        ))
+        with patch.object(main, "_get_remotive_jobs", return_value=([remotive_job], "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([jobicy_job], "stamp", True, [])):
+                all_job_label = self.client.post("/api/job-discovery", json={
+                    "limit": 500,
+                    "mode": "jobs",
+                    "query": "",
+                    "roleTerms": ["ALL TYPE JOB"],
+                    "category": ["All Job Types"],
+                    "skills": ["", "Any skill"],
+                    "company": "",
+                    "location": "",
+                    "workMode": "Any work mode",
+                    "experience": "All opportunities",
+                    "employmentType": "Any employment",
+                })
+                all_types_label = self.client.post("/api/job-discovery", json={
+                    "limit": 500,
+                    "mode": "jobs",
+                    "roleTerms": ["All Job Types"],
+                })
+                empty_filters = self.client.post("/api/job-discovery", json={
+                    "limit": 500,
+                    "mode": "jobs",
+                    "query": " ",
+                    "roleTerms": [""],
+                    "category": [""],
+                    "skills": [""],
+                    "company": " ",
+                    "location": " ",
+                    "workMode": "",
+                    "experience": "",
+                    "employmentType": "",
+                })
+
+        for response in (all_job_label, all_types_label, empty_filters):
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                {job["source"] for job in response.json()["jobs"]},
+                {"Remotive", "Jobicy"},
+            )
+            self.assertEqual(response.json()["totalRetrieved"], 2)
+
+    def test_explicit_role_category_and_skill_filters_still_restrict_results(self):
+        listings = [
+            main._normalize_remotive_job(self.listing(
+                id=7011,
+                title="Python Developer",
+                category="Python",
+                tags=["Python"],
+                url="https://remotive.com/jobs/python-developer-7011",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=7012,
+                title="Java Developer",
+                description="<p>Build applications.</p>",
+                category="Java",
+                tags=["Java"],
+                url="https://remotive.com/jobs/java-developer-7012",
+            )),
+        ]
+        with patch.object(main, "_get_remotive_jobs", return_value=(listings, "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                role_response = self.client.post("/api/job-discovery", json={
+                    "roleTerms": ["Python Developer"],
+                })
+                category_response = self.client.post("/api/job-discovery", json={
+                    "category": ["Java Developer"],
+                })
+                skill_response = self.client.post("/api/job-discovery", json={
+                    "skills": ["Java"],
+                })
+
+        self.assertEqual([job["title"] for job in role_response.json()["jobs"]], ["Python Developer"])
+        self.assertEqual([job["title"] for job in category_response.json()["jobs"]], ["Java Developer"])
+        self.assertEqual([job["title"] for job in skill_response.json()["jobs"]], ["Java Developer"])
+
     def test_internship_and_fresher_filters_classify_titles_and_keep_unknown_records_uncertain(self):
         listings = [
             main._normalize_remotive_job(self.listing(
@@ -403,6 +617,48 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
         self.assertEqual([job["title"] for job in entry_level], ["Graduate Software Engineer", "Software Engineer"])
         self.assertEqual(internships[1]["experienceClassification"], "not stated")
         self.assertEqual(freshers[0]["experienceClassification"], "entry level")
+
+    def test_work_mode_and_employment_filters_keep_unknown_metadata_distinct_from_confirmed_matches(self):
+        unknown = main._normalize_remotive_job(self.listing(
+            id=10,
+            title="Unknown metadata",
+            url="https://remotive.com/jobs/unknown-metadata",
+        ))
+        unknown.update(workMode="", isRemote=None, employmentType="")
+        onsite_internship = {
+            **unknown,
+            "id": "test:onsite",
+            "title": "On-site Internship",
+            "url": "https://remotive.com/jobs/onsite-internship",
+            "workMode": "On-site",
+            "isRemote": False,
+            "employmentType": "Internship",
+        }
+        remote_full_time = {
+            **unknown,
+            "id": "test:remote",
+            "title": "Remote Full-time",
+            "url": "https://remotive.com/jobs/remote-full-time",
+            "workMode": "Remote",
+            "isRemote": True,
+            "employmentType": "Full-time",
+        }
+        listings = [unknown, onsite_internship, remote_full_time]
+        with patch.object(main, "_get_remotive_jobs", return_value=(listings, "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                mode_response = self.client.get("/api/job-discovery?workMode=On-site")
+                employment_response = self.client.get("/api/job-discovery?employmentType=Internship")
+
+        self.assertEqual(
+            [job["title"] for job in mode_response.json()["jobs"]],
+            ["Unknown metadata", "On-site Internship"],
+        )
+        self.assertEqual(
+            [job["title"] for job in employment_response.json()["jobs"]],
+            ["Unknown metadata", "On-site Internship"],
+        )
+        self.assertEqual(main._known_work_mode(unknown), "")
+        self.assertEqual(main._known_employment_types(unknown), [])
 
     def test_location_filter_separates_local_remote_global_and_unspecified_without_claiming_city(self):
         listings = [
