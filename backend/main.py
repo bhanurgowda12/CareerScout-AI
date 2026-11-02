@@ -5,6 +5,7 @@ import re
 import socket
 import threading
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -22,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth import exceptions as google_auth_exceptions
 from google.auth.exceptions import DefaultCredentialsError
+from pydantic import BaseModel, Field
 
 load_dotenv(Path(__file__).with_name(".env"))
 logging.getLogger(__name__).warning(
@@ -63,6 +65,7 @@ REMOTIVE_API_URL = "https://remotive.com/api/remote-jobs?limit=100"
 REMOTIVE_CACHE_SECONDS = 8 * 60 * 60
 REMOTIVE_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 JOB_DISCOVERY_MAX_RESULTS = 500
+JOB_DISCOVERY_MAX_CATEGORY_TERMS = 400
 JOBICY_API_URL = "https://jobicy.com/api/jobs"
 JOBICY_CACHE_SECONDS = 60 * 60
 JOBICY_PAGE_SIZE = 200
@@ -78,6 +81,21 @@ COMPANY_BOARD_TIMEOUT_SECONDS = 5
 COMPANY_BOARD_MAX_CONFIGS = 12
 _company_board_cache = {}
 _company_board_cache_lock = threading.Lock()
+
+
+class JobDiscoverySearchRequest(BaseModel):
+    query: str | None = Field(default=None, max_length=100)
+    category: list[str] = Field(default_factory=list, max_length=JOB_DISCOVERY_MAX_CATEGORY_TERMS)
+    role_terms: list[str] = Field(default_factory=list, alias="roleTerms", max_length=12)
+    skills: list[str] = Field(default_factory=list, max_length=30)
+    company: str | None = Field(default=None, max_length=120)
+    location: str | None = Field(default=None, max_length=120)
+    work_mode: str | None = Field(default=None, alias="workMode", max_length=30)
+    employment_type: str | None = Field(default=None, alias="employmentType", max_length=50)
+    experience: str | None = Field(default=None, max_length=50)
+    mode: str = Field(default="jobs", pattern="^(jobs|company)$")
+    remote_only: bool = Field(default=False, alias="remoteOnly")
+    limit: int = Field(default=100, ge=1, le=JOB_DISCOVERY_MAX_RESULTS)
 
 
 class _JobDescriptionParser(HTMLParser):
@@ -677,16 +695,136 @@ def _deduplicate_provider_jobs(jobs):
     return unique
 
 
+def _normalize_job_search_text(value):
+    if not isinstance(value, str):
+        return ""
+    normalized = unicodedata.normalize("NFKD", value)
+    normalized = "".join(character for character in normalized if not unicodedata.combining(character))
+    normalized = normalized.casefold()
+    normalized = re.sub(r"[^\w+#.]+", " ", normalized).replace("_", " ")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    normalized = re.sub(r"\bfront end\b", "frontend", normalized)
+    normalized = re.sub(r"\bback end\b", "backend", normalized)
+    return re.sub(r"\bfull stack\b", "fullstack", normalized)
+
+
+def _job_search_text(listing):
+    parts = [
+        listing.get("title", ""),
+        listing.get("description", ""),
+        listing.get("category", ""),
+    ]
+    skills = listing.get("skills", [])
+    if isinstance(skills, list):
+        parts.extend(skill for skill in skills if isinstance(skill, str))
+    return _normalize_job_search_text(" ".join(part for part in parts if isinstance(part, str)))
+
+
+_UNRESTRICTED_ROLE_VALUES = {
+    "all type job",
+    "all types job",
+    "all type jobs",
+    "all types jobs",
+    "all job type",
+    "all job types",
+    "all types of job",
+    "all types of jobs",
+    "all jobs",
+    "all roles",
+    "any job",
+    "any role",
+}
+
+
+def _is_unrestricted_role(value):
+    normalized = _normalize_job_search_text(value)
+    return not normalized or normalized in _UNRESTRICTED_ROLE_VALUES
+
+
+def _is_unrestricted_selection(value):
+    normalized = _normalize_job_search_text(value)
+    return _is_unrestricted_role(normalized) or normalized in {"any skill", "any skills", "all skills"}
+
+
+def _matches_search_phrase(text, phrase):
+    normalized_text = _normalize_job_search_text(text)
+    normalized_phrase = _normalize_job_search_text(phrase)
+    if not normalized_text or not normalized_phrase:
+        return False
+    pattern = rf"(?<![^\W_]){re.escape(normalized_phrase)}(?![^\W_])"
+    return re.search(pattern, normalized_text) is not None
+
+
 def _matches_job_text(listing, terms):
-    text = _normalize_company_name(f"{listing.get('title', '')} {listing.get('description', '')}")
+    text = _job_search_text(listing)
     return all(term in text for term in terms)
 
 
 def _matches_any_role_term(listing, terms):
-    if not terms:
+    selected_terms = [term for term in terms if not _is_unrestricted_role(term)]
+    if not selected_terms:
         return True
-    title = _normalize_company_name(listing.get("title", ""))
-    return any(_normalize_company_name(term) in title for term in terms)
+    text = _job_search_text(listing)
+    return any(_matches_search_phrase(text, term) for term in selected_terms)
+
+
+def _matches_any_search_phrase(listing, terms):
+    selected_terms = [term for term in terms if not _is_unrestricted_selection(term)]
+    if not selected_terms:
+        return True
+    text = _job_search_text(listing)
+    return any(_matches_search_phrase(text, term) for term in selected_terms)
+
+
+def _known_work_mode(listing):
+    supplied = _normalize_job_search_text(listing.get("workMode", ""))
+    if _matches_search_phrase(supplied, "hybrid"):
+        return "Hybrid"
+    if _matches_search_phrase(supplied, "remote"):
+        return "Remote"
+    if any(_matches_search_phrase(supplied, term) for term in ("on site", "onsite", "in person")):
+        return "On-site"
+    if listing.get("isRemote") is True:
+        return "Remote"
+    if listing.get("isRemote") is False:
+        return "On-site"
+    return ""
+
+
+def _known_employment_types(listing):
+    supplied = _normalize_job_search_text(listing.get("employmentType", ""))
+    employment_terms = {
+        "Full-time": ("full-time", "full time", "fulltime"),
+        "Part-time": ("part-time", "part time", "parttime"),
+        "Internship": ("internship", "intern"),
+        "Contract": ("contract", "contractor"),
+    }
+    return [
+        label for label, terms in employment_terms.items()
+        if any(_matches_search_phrase(supplied, term) for term in terms)
+    ]
+
+
+def _canonical_work_mode(value):
+    requested = _normalize_job_search_text(value)
+    if requested in {"remote", "hybrid", "on site", "onsite"}:
+        return "On-site" if requested in {"on site", "onsite"} else requested.title()
+    return ""
+
+
+def _canonical_employment_type(value):
+    requested = _normalize_job_search_text(value)
+    aliases = {
+        "full time": "Full-time",
+        "fulltime": "Full-time",
+        "part time": "Part-time",
+        "parttime": "Part-time",
+        "intern": "Internship",
+        "internship": "Internship",
+        "contractor": "Contract",
+        "contract": "Contract",
+    }
+    return aliases.get(requested, "")
 
 
 def _known_experience_level(listing):
@@ -742,12 +880,25 @@ def _classify_location_match(listing, requested_location):
     return ""
 
 
-def _filter_provider_jobs(jobs, *, query, role_terms, company, location, work_mode, employment, experience):
-    query_terms = [_normalize_company_name(term) for term in query.split() if _normalize_company_name(term)]
+def _filter_provider_jobs(
+    jobs,
+    *,
+    query,
+    role_terms,
+    category_terms,
+    skills,
+    company,
+    location,
+    work_mode,
+    employment,
+    experience,
+):
+    normalized_query = _normalize_job_search_text(query)
+    query_terms = normalized_query.split()
     normalized_company = _normalize_company_name(company)
     location_terms = [_normalize_company_name(term) for term in location.split() if _normalize_company_name(term)]
-    requested_mode = _normalize_company_name(work_mode)
-    requested_employment = _normalize_company_name(employment)
+    requested_mode = _canonical_work_mode(work_mode)
+    requested_employment = _canonical_employment_type(employment)
     selected_experience = _normalize_company_name(experience)
     filtered = []
     for job in jobs:
@@ -755,14 +906,18 @@ def _filter_provider_jobs(jobs, *, query, role_terms, company, location, work_mo
             continue
         if role_terms and not _matches_any_role_term(job, role_terms):
             continue
+        if category_terms and not _matches_any_search_phrase(job, category_terms):
+            continue
+        if skills and not _matches_any_search_phrase(job, skills):
+            continue
         if normalized_company and normalized_company not in _normalize_company_name(job.get("company", "")):
             continue
         if location_terms and not _classify_location_match(job, location):
             continue
-        known_mode = _normalize_company_name(job.get("workMode", ""))
-        if requested_mode and known_mode and requested_mode not in known_mode:
+        known_mode = _known_work_mode(job)
+        if requested_mode and known_mode and requested_mode != known_mode:
             continue
-        known_employment = _normalize_company_name(job.get("employmentType", ""))
+        known_employment = _known_employment_types(job)
         if requested_employment and known_employment and requested_employment not in known_employment:
             continue
         if selected_experience and not _matches_experience_filter(job, experience):
@@ -1270,8 +1425,9 @@ def health_check():
 @app.get("/api/job-discovery")
 def get_job_discovery(
     query: str | None = Query(default=None, max_length=100),
-    category: str | None = Query(default=None, max_length=100),
+    category: list[str] | None = Query(default=None, max_length=JOB_DISCOVERY_MAX_CATEGORY_TERMS),
     role_terms: list[str] | None = Query(default=None, alias="roleTerms", max_length=12),
+    skills: list[str] | None = Query(default=None, max_length=30),
     company: str | None = Query(default=None, max_length=120),
     location: str | None = Query(default=None, max_length=120),
     work_mode: str | None = Query(default=None, alias="workMode", max_length=30),
@@ -1286,12 +1442,32 @@ def get_job_discovery(
         normalized_term = term.strip()
         if len(normalized_term) > 100:
             raise HTTPException(status_code=422, detail="Job role search terms must be 100 characters or fewer.")
-        if normalized_term and _normalize_company_name(normalized_term) not in {
+        if normalized_term and not _is_unrestricted_role(normalized_term) and _normalize_company_name(normalized_term) not in {
             _normalize_company_name(value) for value in selected_role_terms
         }:
             selected_role_terms.append(normalized_term)
     if len(selected_role_terms) > 12:
         raise HTTPException(status_code=422, detail="Choose one job role at a time.")
+
+    selected_category_terms = []
+    for term in category or []:
+        normalized_term = term.strip()
+        if len(normalized_term) > 100:
+            raise HTTPException(status_code=422, detail="Job category search terms must be 100 characters or fewer.")
+        if normalized_term and not _is_unrestricted_selection(normalized_term) and _normalize_job_search_text(normalized_term) not in {
+            _normalize_job_search_text(value) for value in selected_category_terms
+        }:
+            selected_category_terms.append(normalized_term)
+
+    selected_skills = []
+    for skill in skills or []:
+        normalized_skill = skill.strip()
+        if len(normalized_skill) > 100:
+            raise HTTPException(status_code=422, detail="Job skill search terms must be 100 characters or fewer.")
+        if normalized_skill and not _is_unrestricted_selection(normalized_skill) and _normalize_job_search_text(normalized_skill) not in {
+            _normalize_job_search_text(value) for value in selected_skills
+        }:
+            selected_skills.append(normalized_skill)
 
     requested_company = (company or "").strip()
     configured_companies = _get_company_board_configs()
@@ -1383,6 +1559,8 @@ def get_job_discovery(
         all_jobs,
         query=(query or "").strip(),
         role_terms=selected_role_terms,
+        category_terms=selected_category_terms,
+        skills=selected_skills,
         company=requested_company if mode == "company" else "",
         location=(location or "").strip(),
         work_mode=(work_mode or "").strip(),
@@ -1473,6 +1651,24 @@ def get_job_discovery(
             1 for job in filtered_jobs if job.get("sourceType") == "aggregator"
         ),
     }
+
+
+@app.post("/api/job-discovery")
+def post_job_discovery(filters: JobDiscoverySearchRequest):
+    return get_job_discovery(
+        query=filters.query,
+        category=filters.category,
+        role_terms=filters.role_terms,
+        skills=filters.skills,
+        company=filters.company,
+        location=filters.location,
+        work_mode=filters.work_mode,
+        employment_type=filters.employment_type,
+        experience=filters.experience,
+        mode=filters.mode,
+        remote_only=filters.remote_only,
+        limit=filters.limit,
+    )
 
 
 @app.get("/api/learning-resources")

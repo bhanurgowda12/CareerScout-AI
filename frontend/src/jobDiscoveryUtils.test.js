@@ -11,12 +11,17 @@ import {
   filterAndSortDiscoveryListings,
   filterDiscoveryListings,
   formatDiscoveryDate,
+  getCategorySearchTerms,
   getExperienceClassification,
+  getKnownEmploymentTypes,
+  getKnownWorkMode,
   getLocationMatch,
   getRoleSearchTerms,
   groupListingsByCompany,
   isValidDiscoveryListing,
+  isUnrestrictedJobRole,
   JOB_CATEGORIES,
+  JOB_SKILLS,
   matchesJobSelections,
   normalizeSearchText,
 } from './jobDiscoveryUtils.js';
@@ -129,6 +134,85 @@ test('normalizes search text and matches multi-category roles and full-stack syn
   assert.equal(matchesJobSelections(listing, {}), true);
 });
 
+test('treats all-job role labels and empty/default filters as unrestricted', () => {
+  for (const role of ['ALL TYPE JOB', 'All Job Types', 'All types of jobs', '']) {
+    assert.equal(isUnrestrictedJobRole(role), true);
+    assert.deepEqual(getRoleSearchTerms(role), []);
+    assert.deepEqual(filterAndSortDiscoveryListings([listing], { role }), [listing]);
+  }
+
+  assert.deepEqual(filterAndSortDiscoveryListings([listing], {
+    query: '',
+    role: 'ALL TYPE JOB',
+    categories: ['All Job Types', ''],
+    skills: ['', 'Any skill'],
+    company: '',
+    location: '',
+    workMode: '',
+    experience: '',
+    employment: '',
+  }), [listing]);
+});
+
+test('matches selected skills against listing evidence and avoids partial technology-name matches', () => {
+  const skillListings = [
+    { ...listing, id: 'python-title', url: 'https://remotive.com/jobs/python-title', title: 'Python Developer', description: '' },
+    { ...listing, id: 'typescript-description', url: 'https://remotive.com/jobs/typescript-description', title: 'Frontend Engineer', description: 'Build with TypeScript.' },
+    { ...listing, id: 'data-category', url: 'https://remotive.com/jobs/data-category', title: 'Analyst', category: 'Data Science' },
+    { ...listing, id: 'mongo-tag', url: 'https://remotive.com/jobs/mongo-tag', title: 'Backend Engineer', skills: ['MongoDB'] },
+    { ...listing, id: 'javascript', url: 'https://remotive.com/jobs/javascript', title: 'JavaScript Developer', description: '', skills: [] },
+  ];
+
+  assert.ok(JOB_SKILLS.includes('Python'));
+  assert.ok(JOB_SKILLS.includes('Machine Learning'));
+  assert.deepEqual(filterAndSortDiscoveryListings(skillListings, { skills: ['Python'] }).map((job) => job.id), ['python-title']);
+  assert.deepEqual(filterAndSortDiscoveryListings(skillListings, { skills: ['TypeScript'] }).map((job) => job.id), ['typescript-description']);
+  assert.deepEqual(filterAndSortDiscoveryListings(skillListings, { skills: ['Data Science'] }).map((job) => job.id), ['data-category']);
+  assert.deepEqual(filterAndSortDiscoveryListings(skillListings, { skills: ['MongoDB'] }).map((job) => job.id), ['mongo-tag']);
+  assert.deepEqual(filterAndSortDiscoveryListings(skillListings, { skills: ['Java'] }).map((job) => job.id), []);
+  assert.deepEqual(filterAndSortDiscoveryListings(skillListings, { skills: ['Java', 'MongoDB'] }).map((job) => job.id), ['mongo-tag']);
+});
+
+test('matches expanded role aliases and sends category terms consistent with frontend taxonomy filters', () => {
+  for (const title of [
+    'Python Developer',
+    'Java Developer',
+    'JavaScript Developer',
+    'React Developer',
+    'Angular Developer',
+    'Node.js Developer',
+    'Frontend Developer',
+    'Backend Developer',
+    'Full Stack Developer',
+    'Software Engineer',
+    'AI Engineer',
+    'Machine Learning Engineer',
+    'Data Analyst',
+    'Data Scientist',
+    'Game Developer',
+    'DevOps Engineer',
+    'Cloud Engineer',
+    'Cybersecurity Engineer',
+  ]) {
+    assert.equal(getRoleSearchTerms(title)[0], title);
+  }
+  assert.deepEqual(getRoleSearchTerms('Python Developer'), [
+    'Python Developer',
+    'Python Engineer',
+    'Python Programmer',
+    'Python Software Developer',
+  ]);
+  assert.ok(matchesJobSelections({ ...listing, title: 'Python Engineer' }, { role: 'Python Developer' }));
+  assert.ok(matchesJobSelections({ ...listing, title: 'Java Software Developer' }, { role: 'Java Developer' }));
+  assert.equal(matchesJobSelections({ ...listing, title: 'JavaScript Developer' }, { role: 'Java Developer' }), false);
+  assert.ok(matchesJobSelections({ ...listing, description: 'Build internal tools as a React.js Developer.' }, { role: 'React Developer' }));
+  assert.ok(getCategorySearchTerms(['software-development']).includes('Python Developer'));
+  assert.ok(matchesJobSelections({ ...listing, title: 'Unspecified role', category: 'Software Development' }, {
+    categories: ['software-development'],
+  }));
+  assert.ok(matchesJobSelections({ ...listing, description: 'Develop Python services.' }, { categories: ['software-development'] }));
+});
+
 test('filters, deduplicates, groups and sorts only returned provider listings', () => {
   const second = {
     ...listing,
@@ -198,7 +282,45 @@ test('filters supported employment and experience terms without inventing missin
   }), [listing]);
   assert.deepEqual(filterAndSortDiscoveryListings([listing], {
     workMode: 'On-site',
-  }), [listing]);
+  }), []);
+});
+
+test('keeps unknown work-mode and employment metadata visible without treating it as confirmed', () => {
+  const unknown = {
+    ...listing,
+    id: 'unknown',
+    url: 'https://remotive.com/jobs/unknown-metadata',
+    workMode: '',
+    isRemote: null,
+    employmentType: '',
+  };
+  const onsite = {
+    ...unknown,
+    id: 'onsite',
+    url: 'https://remotive.com/jobs/onsite-metadata',
+    workMode: 'On-site',
+    isRemote: false,
+    employmentType: 'Internship',
+  };
+  const remote = {
+    ...unknown,
+    id: 'remote',
+    url: 'https://remotive.com/jobs/remote-metadata',
+    workMode: 'Remote',
+    isRemote: true,
+    employmentType: 'Full-Time',
+  };
+
+  assert.equal(getKnownWorkMode(unknown), '');
+  assert.equal(getKnownWorkMode(remote), 'Remote');
+  assert.deepEqual(getKnownEmploymentTypes(unknown), []);
+  assert.deepEqual(getKnownEmploymentTypes(remote), ['Full-time']);
+  assert.deepEqual(filterAndSortDiscoveryListings([unknown, onsite, remote], {
+    workMode: 'On-site',
+  }).map((job) => job.id), ['unknown', 'onsite']);
+  assert.deepEqual(filterAndSortDiscoveryListings([unknown, onsite, remote], {
+    employment: 'Internship',
+  }).map((job) => job.id), ['unknown', 'onsite']);
 });
 
 test('filters city matches honestly and keeps global/unspecified remote listings separate', () => {

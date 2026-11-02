@@ -8,13 +8,18 @@ import {
   createTrackerPrefill,
   filterAndSortDiscoveryListings,
   formatDiscoveryDate,
+  getCategorySearchTerms,
   getAllJobRoles,
+  getKnownEmploymentTypes,
   getExperienceClassification,
+  getKnownWorkMode,
   getLocationMatch,
   getRoleSearchTerms,
   groupListingsByCompany,
   isValidDiscoveryListing,
+  isUnrestrictedJobRole,
   JOB_CATEGORIES,
+  JOB_SKILLS,
   MAX_JOB_LOCATION_LENGTH,
   MAX_JOB_SEARCH_LENGTH,
   summarizeCompanyListings,
@@ -50,6 +55,7 @@ export function JobDiscovery({
   const [companyQuery, setCompanyQuery] = useState('');
   const [location, setLocation] = useState('');
   const [selectedCategories, setSelectedCategories] = useState([]);
+  const [selectedSkills, setSelectedSkills] = useState([]);
   const [role, setRole] = useState('');
   const [workMode, setWorkMode] = useState('Any work mode');
   const [experience, setExperience] = useState('All opportunities');
@@ -121,29 +127,37 @@ export function JobDiscovery({
   }, [selectedCategories]);
 
   const listingQuery = query.trim();
+  const activeRole = isUnrestrictedJobRole(role) ? '' : role;
   const visibleJobs = useMemo(() => filterAndSortDiscoveryListings(jobs, {
     query: listingQuery,
     categories: selectedCategories,
-    role,
+    role: activeRole,
+    skills: selectedSkills,
     workMode,
     experience,
     employment,
     company: searchMode === 'company' ? companyQuery : company,
     location,
     sortBy,
-  }), [jobs, listingQuery, selectedCategories, role, workMode, experience, employment, company, companyQuery, searchMode, location, sortBy]);
+  }), [jobs, listingQuery, selectedCategories, selectedSkills, activeRole, workMode, experience, employment, company, companyQuery, searchMode, location, sortBy]);
 
   const selectedCategoryText = selectedCategories
     .map((id) => JOB_CATEGORIES.find((categoryItem) => categoryItem.id === id)?.label)
     .filter(Boolean)
     .join(' ');
-  const externalSearchTerm = [role || selectedCategoryText, listingQuery].filter(Boolean).join(' ')
+  const externalSearchTerm = [activeRole || selectedCategoryText, listingQuery].filter(Boolean).join(' ')
     || (location.trim() ? 'jobs' : '');
   const externalSearchLinks = useMemo(
     () => createExternalJobSearchLinks(externalSearchTerm, location),
     [externalSearchTerm, location],
   );
   const companySummary = useMemo(() => summarizeCompanyListings(visibleJobs), [visibleJobs]);
+  const unknownWorkModeMatches = workMode === 'Any work mode'
+    ? 0
+    : visibleJobs.filter((job) => !getKnownWorkMode(job)).length;
+  const unknownEmploymentMatches = employment === 'Any employment'
+    ? 0
+    : visibleJobs.filter((job) => !getKnownEmploymentTypes(job).length).length;
   const externalCompanySearch = createExternalCompanySearchLink(companyQuery);
   const locationSections = location.trim()
     ? [
@@ -196,18 +210,24 @@ export function JobDiscovery({
     const timeoutId = window.setTimeout(() => controller.abort(), 12000);
     setLoading(true);
     try {
-      const searchParams = new URLSearchParams({ limit: '500', mode: searchMode });
-      if (trimmedQuery) searchParams.set('query', trimmedQuery);
-      if (searchMode === 'company') searchParams.set('company', companyQuery.trim());
-      if (location.trim()) searchParams.set('location', location.trim());
-      if (workMode !== 'Any work mode') searchParams.set('workMode', workMode);
-      if (employment !== 'Any employment') searchParams.set('employmentType', employment);
-      if (experience !== 'All opportunities') searchParams.set('experience', experience);
-      const roleSearchTerms = role ? getRoleSearchTerms(role) : [];
-      [...new Set(roleSearchTerms)].forEach((term) => searchParams.append('roleTerms', term));
-      const response = await fetch(`${API_BASE_URL}/api/job-discovery?${searchParams}`, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
+      const searchFilters = { limit: 500, mode: searchMode };
+      if (trimmedQuery) searchFilters.query = trimmedQuery;
+      if (searchMode === 'company') searchFilters.company = companyQuery.trim();
+      if (location.trim()) searchFilters.location = location.trim();
+      if (workMode !== 'Any work mode') searchFilters.workMode = workMode;
+      if (employment !== 'Any employment') searchFilters.employmentType = employment;
+      if (experience !== 'All opportunities') searchFilters.experience = experience;
+      const roleSearchTerms = activeRole ? getRoleSearchTerms(activeRole) : [];
+      if (roleSearchTerms.length) searchFilters.roleTerms = [...new Set(roleSearchTerms)];
+      if (!activeRole) {
+        const categoryTerms = getCategorySearchTerms(selectedCategories);
+        if (categoryTerms.length) searchFilters.category = categoryTerms;
+      }
+      if (selectedSkills.length) searchFilters.skills = selectedSkills;
+      const response = await fetch(`${API_BASE_URL}/api/job-discovery`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify(searchFilters),
         signal: controller.signal,
       });
       let payload;
@@ -273,6 +293,12 @@ export function JobDiscovery({
     });
   }
 
+  function toggleSkill(skill) {
+    setSelectedSkills((current) => current.includes(skill)
+      ? current.filter((item) => item !== skill)
+      : [...current, skill]);
+  }
+
   function analyzeListing(listing) {
     onAnalyzeJob?.(listing);
   }
@@ -310,13 +336,13 @@ export function JobDiscovery({
           </header>
           <dl>
             <div><dt>Location</dt><dd>{job.location || 'Not provided by source'}</dd></div>
-            <div><dt>Work mode</dt><dd>{job.workMode || 'Not provided by source'}</dd></div>
+            <div><dt>Work mode</dt><dd>{job.workMode || getKnownWorkMode(job) || 'Unknown — not stated by source'}</dd></div>
             <div><dt>Experience</dt><dd>{job.experienceLevel || (
               getExperienceClassification(job) === 'Not stated'
                 ? 'Not stated by source'
                 : `${getExperienceClassification(job)} (inferred from title or type)`
             )}</dd></div>
-            <div><dt>Employment</dt><dd>{job.employmentType || 'Not provided by source'}</dd></div>
+            <div><dt>Employment</dt><dd>{job.employmentType || 'Unknown — not stated by source'}</dd></div>
             <div><dt>Salary</dt><dd>{job.salary || 'Not provided by source'}</dd></div>
             <div><dt>Published</dt><dd>{publishedDate
               ? <time dateTime={job.publicationDate}>{publishedDate}</time>
@@ -516,6 +542,22 @@ export function JobDiscovery({
               </div>
             </details>
           </div>
+          <div className="form-field job-discovery-category-picker job-discovery-skill-picker">
+            <span id="job-discovery-skills-label">Technology skills <small>(matches any selected)</small></span>
+            <details>
+              <summary aria-labelledby="job-discovery-skills-label">
+                {selectedSkills.length ? `${selectedSkills.length} skills selected` : 'Any skill'}
+              </summary>
+              <div className="job-discovery-category-options">
+                {JOB_SKILLS.map((skill) => (
+                  <label key={skill}>
+                    <input type="checkbox" checked={selectedSkills.includes(skill)} onChange={() => toggleSkill(skill)} />
+                    <span>{skill}</span>
+                  </label>
+                ))}
+              </div>
+            </details>
+          </div>
           <label className="form-field" htmlFor="job-discovery-work-mode">
             <span>Work mode</span>
             <select id="job-discovery-work-mode" value={workMode} onChange={(event) => setWorkMode(event.target.value)}>
@@ -538,6 +580,9 @@ export function JobDiscovery({
             {loading ? 'Searching...' : 'Discover Jobs'}
           </button>
         </div>
+        <p className="job-discovery-search-guidance">
+          Skills match listing titles, descriptions, categories, or provider skill tags. Specific work-mode and employment filters keep listings with missing metadata visible as unknown; those listings are not confirmed matches.
+        </p>
         {validationError && <p className="job-discovery-error" id="job-discovery-validation-error" role="alert">{validationError}</p>}
       </form>
 
@@ -557,6 +602,16 @@ export function JobDiscovery({
             {companySummary.internships === 1 ? '' : 's'}, {companySummary.entryLevel} fresher/entry-level,
             {' '}{companySummary.experienced} experienced, and {companySummary.unknownExperience} with experience not stated.
           </p>
+          {unknownWorkModeMatches > 0 && (
+            <p>
+              {unknownWorkModeMatches} listing{unknownWorkModeMatches === 1 ? ' has' : 's have'} an unknown work mode and remain visible; {workMode} is not confirmed by the source.
+            </p>
+          )}
+          {unknownEmploymentMatches > 0 && (
+            <p>
+              {unknownEmploymentMatches} listing{unknownEmploymentMatches === 1 ? ' has' : 's have'} an unknown employment type and remain visible; {employment} is not confirmed by the source.
+            </p>
+          )}
           {location.trim() && (
             <p>
               Location results: {companySummary.localMatches} source-confirmed local,
@@ -636,7 +691,7 @@ export function JobDiscovery({
       )}
       {profileError && <p className="job-discovery-profile-note" role="status">{profileError}</p>}
       {profileState === 'loading' && <p className="job-discovery-profile-note" role="status">Loading your saved profile for comparison and personalized roadmaps...</p>}
-      {loading && <div className="job-discovery-state" role="status"><span className="recommendation-spinner" aria-hidden="true" /><p>Loading remote job listings...</p></div>}
+      {loading && <div className="job-discovery-state" role="status"><span className="recommendation-spinner" aria-hidden="true" /><p>Loading job listings...</p></div>}
       {error && !loading && <div className="job-discovery-state job-discovery-state--error" role="alert"><p>{error}</p><button className="button button-secondary" type="button" onClick={searchJobs}>Try again</button></div>}
 
       {!loading && !error && !hasSearched && (
