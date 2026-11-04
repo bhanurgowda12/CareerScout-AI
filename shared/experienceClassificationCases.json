@@ -1,0 +1,354 @@
+[
+  {
+    "name": "provider internship level",
+    "listing": { "title": "Software Engineer", "experienceLevel": "Internship" },
+    "classification": "internship",
+    "source": "provider"
+  },
+  {
+    "name": "provider fresher level",
+    "listing": { "title": "Software Engineer", "experienceLevel": "Fresher" },
+    "classification": "fresher/graduate",
+    "source": "provider"
+  },
+  {
+    "name": "provider junior level",
+    "listing": { "title": "Software Engineer", "experienceLevel": "Entry Level" },
+    "classification": "entry-level",
+    "source": "provider"
+  },
+  {
+    "name": "provider senior level takes precedence over same title",
+    "listing": { "title": "Senior Software Engineer", "experienceMetadata": [{ "label": "Seniority", "value": "Senior" }] },
+    "classification": "experienced",
+    "source": "provider"
+  },
+  {
+    "name": "explicit principal metadata",
+    "listing": { "title": "Software Engineer", "experienceMetadata": [{ "label": "Job Level", "value": "Principal" }] },
+    "classification": "experienced",
+    "source": "provider"
+  },
+  {
+    "name": "title internship inference",
+    "listing": { "title": "Software Engineering Intern" },
+    "classification": "internship",
+    "source": "title"
+  },
+  {
+    "name": "title graduate trainee inference",
+    "listing": { "title": "Graduate Engineer Trainee" },
+    "classification": "fresher/graduate",
+    "source": "title"
+  },
+  {
+    "name": "title fresher inference",
+    "listing": { "title": "Fresher Python Developer" },
+    "classification": "fresher/graduate",
+    "source": "title"
+  },
+  {
+    "name": "title junior inference",
+    "listing": { "title": "Junior Python Developer" },
+    "classification": "entry-level",
+    "source": "title"
+  },
+  {
+    "name": "title senior inference",
+    "listing": { "title": "Senior Backend Engineer" },
+    "classification": "experienced",
+    "source": "title"
+  },
+  {
+    "name": "title principal inference",
+    "listing": { "title": "Principal Software Engineer" },
+    "classification": "experienced",
+    "source": "title"
+  },
+  {
+    "name": "ambiguous associate title",
+    "listing": { "title": "Associate Software Engineer" },
+    "classification": "unknown",
+    "source": "unknown"
+  },
+  {
+    "name": "generic trainee title",
+    "listing": { "title": "Trainee Developer" },
+    "classification": "unknown",
+    "source": "unknown"
+  },
+  {
+    "name": "unrecognized provider level",
+    "listing": { "title": "Software Engineer", "experienceLevel": "Associate" },
+    "classification": "unknown",
+    "source": "unknown"
+  },
+  {
+    "name": "full-time employment does not imply experience",
+    "listing": { "title": "Software Engineer", "employmentType": "Full-time" },
+    "classification": "unknown",
+    "source": "unknown"
+  },
+  {
+    "name": "internship employment metadata is direct evidence",
+    "listing": { "title": "Software Engineer", "employmentType": "Internship" },
+    "classification": "internship",
+    "source": "provider"
+  },
+  {
+    "name": "conflicting provider and title evidence stays unknown",
+    "listing": { "title": "Senior Software Engineer", "experienceLevel": "Entry Level" },
+    "classification": "unknown",
+    "source": "unknown"
+  },
+  {
+    "name": "internal is not intern",
+    "listing": { "title": "Internal Tools Engineer" },
+    "classification": "unknown",
+    "source": "unknown"
+  },
+  {
+    "name": "no experience evidence",
+    "listing": { "title": "Software Engineer" },
+    "classification": "unknown",
+    "source": "unknown"
+  },
+  {
+    "name": "Full Stack role-specific years requirement",
+    "listing": {
+      "title": "Full-Stack Developer",
+      "description": "What we're looking for: 3+ years of experience as a full-stack or frontend-heavy engineer."
+    },
+    "classification": "experienced",
+    "source": "description-inferred",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "experienced",
+    "senioritySource": "description-inferred"
+  },
+  {
+    "name": "AI Data Scientist similar-role years requirement",
+    "listing": {
+      "title": "AI Data Scientist",
+      "experienceLevel": "Any",
+      "description": "Qualifications: 5+ Years of experience in Similar roles."
+    },
+    "classification": "experienced",
+    "source": "description-inferred",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "experienced",
+    "senioritySource": "description-inferred"
+  },
+  {
+    "name": "Tier III service role years requirement",
+    "listing": {
+      "title": "Tier III Service Desk Engineer",
+      "description": "Qualifications: 6+ years of experience providing IT services and end-user support."
+    },
+    "classification": "experienced",
+    "source": "description-inferred",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "experienced",
+    "senioritySource": "description-inferred"
+  },
+  {
+    "name": "Internship opportunity with entry-level seniority",
+    "listing": {
+      "title": "Full Stack Developer Intern",
+      "employmentType": "Internship",
+      "experienceLevel": "Entry-Level, Junior"
+    },
+    "classification": "entry-level",
+    "source": "provider",
+    "opportunityType": "internship",
+    "opportunityTypeSource": "provider",
+    "seniority": "entry-level",
+    "senioritySource": "provider"
+  },
+  {
+    "name": "full-time opportunity with experienced seniority",
+    "listing": {
+      "title": "Software Engineer",
+      "employmentType": "Full-time",
+      "experienceLevel": "Senior"
+    },
+    "classification": "experienced",
+    "source": "provider",
+    "opportunityType": "non-internship",
+    "opportunityTypeSource": "provider",
+    "seniority": "experienced",
+    "senioritySource": "provider"
+  },
+  {
+    "name": "full-time opportunity with fresher seniority",
+    "listing": {
+      "title": "Graduate Software Engineer",
+      "employmentType": "Full-time",
+      "experienceLevel": "Graduate"
+    },
+    "classification": "fresher/graduate",
+    "source": "provider",
+    "opportunityType": "non-internship",
+    "opportunityTypeSource": "provider",
+    "seniority": "fresher/graduate",
+    "senioritySource": "provider"
+  },
+  {
+    "name": "explicit no prior experience requirement",
+    "listing": {
+      "title": "Software Engineer",
+      "description": "No prior experience required."
+    },
+    "classification": "entry-level",
+    "source": "description-inferred",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "entry-level",
+    "senioritySource": "description-inferred"
+  },
+  {
+    "name": "recent graduates explicitly eligible",
+    "listing": {
+      "title": "Software Engineer",
+      "description": "Recent graduates are encouraged to apply."
+    },
+    "classification": "fresher/graduate",
+    "source": "description-inferred",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "fresher/graduate",
+    "senioritySource": "description-inferred"
+  },
+  {
+    "name": "generic student mention remains unknown",
+    "listing": {
+      "title": "Software Engineer",
+      "description": "Our product helps students organize their classes."
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "junior engineers to mentor are not a level signal",
+    "listing": {
+      "title": "Software Engineer",
+      "description": "You will mentor junior engineers on the team."
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "entry-level duty wording is not a candidate level",
+    "listing": {
+      "title": "Remote Office Assistant",
+      "description": "Assist with entry-level bookkeeping and internal reports."
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "skill-only years requirement remains unknown",
+    "listing": {
+      "title": "Software Engineer",
+      "description": "Requirements: 5+ years of experience with Python and Kubernetes."
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "one year role requirement remains uncertain",
+    "listing": {
+      "title": "Technical Support Engineer",
+      "description": "What you'll bring: 1+ years of experience in a technical support role."
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "Jobicy Any level is unknown",
+    "listing": {
+      "title": "Software Engineer",
+      "experienceLevel": "Any"
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "Jobicy Director level is experienced",
+    "listing": {
+      "title": "Software Engineer",
+      "experienceLevel": "Director"
+    },
+    "classification": "experienced",
+    "source": "provider",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "experienced",
+    "senioritySource": "provider"
+  },
+  {
+    "name": "Jobicy Midweight remains unknown",
+    "listing": {
+      "title": "Software Engineer",
+      "experienceLevel": "Midweight"
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "description explicitly identifies internship opportunity",
+    "listing": {
+      "title": "Software Engineer",
+      "description": "This is a paid internship program on our product team."
+    },
+    "classification": "internship",
+    "source": "description-inferred",
+    "opportunityType": "internship",
+    "opportunityTypeSource": "description-inferred",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "description contradicts title level",
+    "listing": {
+      "title": "Senior Software Engineer",
+      "description": "No prior experience required."
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  }
+]

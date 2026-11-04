@@ -419,12 +419,14 @@ export function filterAndSortDiscoveryListings(listings, filters = {}) {
       if (knownEmploymentTypes.length && !knownEmploymentTypes.includes(employment)) return false;
     }
     if (normalizeSearchText(experience) && normalizeSearchText(experience) !== 'all opportunities') {
-      const classification = getExperienceClassification(listing);
-      if (experience === 'Internships' && !['Internship', 'Not stated'].includes(classification)) return false;
-      if (['Freshers & graduates', 'Entry-level jobs'].includes(experience)
-        && !['Entry-level', 'Not stated'].includes(classification)) return false;
+      const { classification } = getExperienceFilterClassificationDetails(listing, experience);
+      if (experience === 'Internships' && !['internship', 'unknown'].includes(classification)) return false;
+      if (experience === 'Freshers & graduates'
+        && !['fresher/graduate', 'unknown'].includes(classification)) return false;
+      if (experience === 'Entry-level jobs'
+        && !['entry-level', 'unknown'].includes(classification)) return false;
       if (experience === 'Experienced jobs'
-        && !['Experienced', 'Not stated'].includes(classification)) return false;
+        && !['experienced', 'unknown'].includes(classification)) return false;
     }
     return true;
   });
@@ -441,23 +443,279 @@ export function filterAndSortDiscoveryListings(listings, filters = {}) {
 
 export function getKnownExperienceLevel(listing) {
   const classification = getExperienceClassification(listing);
-  return classification === 'Not stated' ? '' : classification;
+  return classification === 'Unknown' ? '' : classification;
+}
+
+const EXPERIENCE_CLASS_PATTERNS = [
+  ['fresher/graduate', /\b(?:freshers?|graduates?|new grad(?:uate)?)\b/u],
+  ['entry-level', /\b(?:junior|entry level|apprentice|apprenticeship)\b/u],
+  ['experienced', /\b(?:senior|principal|staff|lead|director|experienced|mid level|mid senior)\b/u],
+];
+const EXPERIENCE_TITLE_PATTERNS = [
+  ['fresher/graduate', /\b(?:freshers?|graduates?|new grad(?:uate)?)\b/u],
+  ['entry-level', /\b(?:junior|entry level)\b/u],
+  ['experienced', /\b(?:senior|principal|experienced)\b/u],
+];
+
+const EXPERIENCE_CLASSIFICATION_LABELS = new Map([
+  ['internship', 'internship'],
+  ['non internship', 'non-internship'],
+  ['fresher graduate', 'fresher/graduate'],
+  ['entry level', 'entry-level'],
+  ['experienced', 'experienced'],
+  ['unknown', 'unknown'],
+  ['not stated', 'unknown'],
+]);
+const EXPERIENCE_DISPLAY_LABELS = new Map([
+  ['internship', 'Internship'],
+  ['non-internship', 'Non-internship'],
+  ['fresher/graduate', 'Fresher/Graduate'],
+  ['entry-level', 'Entry-level'],
+  ['experienced', 'Experienced'],
+  ['unknown', 'Unknown'],
+]);
+
+function getExperienceSignals(value, { title = false } = {}) {
+  const normalized = normalizeSearchText(value);
+  if (!normalized) return new Set();
+  const patterns = title ? EXPERIENCE_TITLE_PATTERNS : EXPERIENCE_CLASS_PATTERNS;
+  return new Set(patterns
+    .filter(([, pattern]) => pattern.test(normalized))
+    .map(([classification]) => classification));
+}
+
+const DESCRIPTION_INTERNSHIP_PATTERN = /\b(?:internship\s+(?:position|role|opportunity|program)|summer\s+internship|(?:as|working\s+as)\s+an?\s+intern|intern\s+(?:position|role|opportunity))\b/iu;
+const DESCRIPTION_FRESHER_PATTERN = /\b(?:open\s+to|welcome(?:d)?\s+to\s+apply|encouraged\s+to\s+apply|designed\s+for|seeking|looking\s+for|ideal\s+for|intended\s+for|accept(?:ing)?\s+applications\s+from)\s+(?:recent\s+|new\s+)?(?:college\s+)?(?:graduates?|grads?|freshers?)\b|\b(?:recent|new)\s+(?:college\s+)?(?:graduates?|grads?|freshers?)\s+(?:are\s+)?(?:welcome|encouraged|eligible|invited)\b/iu;
+const DESCRIPTION_NO_EXPERIENCE_PATTERN = /\b(?:no\s+(?:(?:prior|previous|professional)\s+)?experience\s+(?:is\s+)?(?:required|needed|necessary)|experience\s+not\s+required)\b/iu;
+const DESCRIPTION_ENTRY_LEVEL_PATTERN = /\bentry[- ]level\s+(?:position|role|opportunity)\b/iu;
+const DESCRIPTION_ROLE_EXPERIENCE_PATTERN = /\b(?<years>\d+(?:\.\d+)?\+?|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\s+(?:of\s+)?experience\s+(?:(?:as|working\s+as)\s+(?:an?\s+)?[^.;\n]{1,100}\b(?:engineer|developer|analyst|scientist|architect|designer|administrator|technician|specialist|consultant|manager|professional|role|position)\b|in\s+(?:similar|related)\s+roles?\b|in\s+(?:an?\s+)?[^.;\n]{1,80}\b(?:role|position)\b|providing\s+[^.;\n]{1,100}\b(?:services?|support|operations|engineering|development|management)\b)/iu;
+const EXPERIENCE_NUMBER_WORDS = new Map([
+  ['one', 1], ['two', 2], ['three', 3], ['four', 4], ['five', 5],
+  ['six', 6], ['seven', 7], ['eight', 8], ['nine', 9], ['ten', 10],
+]);
+const EXPERIENCE_CLASSIFICATION_SOURCES = new Set([
+  'provider',
+  'title',
+  'description-inferred',
+  'unknown',
+]);
+
+function getDescriptionSenioritySignal(description = '') {
+  const entryLevelMatch = DESCRIPTION_NO_EXPERIENCE_PATTERN.exec(description)
+    || DESCRIPTION_ENTRY_LEVEL_PATTERN.exec(description);
+  if (entryLevelMatch) {
+    return { classification: 'entry-level', evidence: entryLevelMatch[0].trim() };
+  }
+  const fresherMatch = DESCRIPTION_FRESHER_PATTERN.exec(description);
+  if (fresherMatch) {
+    return { classification: 'fresher/graduate', evidence: fresherMatch[0].trim() };
+  }
+  const experienceMatch = DESCRIPTION_ROLE_EXPERIENCE_PATTERN.exec(description);
+  if (experienceMatch) {
+    const rawYears = experienceMatch.groups.years.toLocaleLowerCase().replace(/\+$/, '');
+    const years = EXPERIENCE_NUMBER_WORDS.get(rawYears) ?? Number.parseFloat(rawYears);
+    if (years >= 2) {
+      return { classification: 'experienced', evidence: experienceMatch[0].trim() };
+    }
+  }
+  return null;
+}
+
+function resolveExperienceDimension({
+  providerSignals,
+  titleSignals,
+  descriptionSignal,
+  providerEvidence,
+  title,
+  unknownEvidence,
+}) {
+  if (providerSignals.size > 1) {
+    return { classification: 'unknown', source: 'unknown', evidence: 'Provider metadata indicates conflicting values.' };
+  }
+  if (providerSignals.size === 1) {
+    const classification = [...providerSignals][0];
+    if ((titleSignals.size && (titleSignals.size > 1 || !titleSignals.has(classification)))
+      || (descriptionSignal && descriptionSignal.classification !== classification)) {
+      return { classification: 'unknown', source: 'unknown', evidence: 'Provider metadata, title, or description indicate conflicting values.' };
+    }
+    return { classification, source: 'provider', evidence: providerEvidence.join('; ') };
+  }
+  if (titleSignals.size > 1) {
+    return { classification: 'unknown', source: 'unknown', evidence: 'The title contains conflicting experience-level terms.' };
+  }
+  if (titleSignals.size === 1) {
+    const classification = [...titleSignals][0];
+    if (descriptionSignal && descriptionSignal.classification !== classification) {
+      return { classification: 'unknown', source: 'unknown', evidence: 'The title and description indicate conflicting experience levels.' };
+    }
+    return { classification, source: 'title', evidence: title.trim() };
+  }
+  if (descriptionSignal) {
+    return {
+      classification: descriptionSignal.classification,
+      source: 'description-inferred',
+      evidence: descriptionSignal.evidence,
+    };
+  }
+  return { classification: 'unknown', source: 'unknown', evidence: unknownEvidence };
+}
+
+export function getExperienceClassificationDetails(listing) {
+  const suppliedClassification = EXPERIENCE_CLASSIFICATION_LABELS.get(
+    normalizeSearchText(listing?.experienceClassification),
+  );
+  const suppliedSource = EXPERIENCE_CLASSIFICATION_SOURCES.has(listing?.experienceClassificationSource)
+    ? listing.experienceClassificationSource
+    : '';
+
+  const providerValues = [];
+  if (typeof listing?.experienceLevel === 'string' && listing.experienceLevel.trim()) {
+    providerValues.push(listing.experienceLevel.trim());
+  }
+  if (Array.isArray(listing?.experienceMetadata)) {
+    providerValues.push(...listing.experienceMetadata
+      .filter((entry) => entry && typeof entry.value === 'string' && entry.value.trim())
+      .map((entry) => entry.value.trim()));
+  }
+  const distinctProviderValues = [...new Map(
+    providerValues.map((value) => [normalizeSearchText(value), value]),
+  ).values()];
+
+  const providerSenioritySignals = new Set(distinctProviderValues
+    .flatMap((value) => [...getExperienceSignals(value)]));
+  const providerSeniorityEvidence = distinctProviderValues
+    .filter((value) => getExperienceSignals(value).size > 0);
+  const providerOpportunityEvidence = distinctProviderValues
+    .filter((value) => /\b(?:intern|internship)\b/u.test(normalizeSearchText(value)));
+  const providerOpportunitySignals = new Set(
+    providerOpportunityEvidence.map(() => 'internship'),
+  );
+  const employmentType = typeof listing?.employmentType === 'string' ? listing.employmentType : '';
+  const knownEmploymentTypes = getKnownEmploymentTypes(listing);
+  if (knownEmploymentTypes.includes('Internship')) {
+    providerOpportunitySignals.add('internship');
+    providerOpportunityEvidence.push(`employment type: ${employmentType.trim()}`);
+  }
+  if (knownEmploymentTypes.some((type) => type !== 'Internship')) {
+    providerOpportunitySignals.add('non-internship');
+    providerOpportunityEvidence.push(`employment type: ${employmentType.trim()}`);
+  }
+  const title = typeof listing?.title === 'string' ? listing.title.trim() : '';
+  const titleSenioritySignals = getExperienceSignals(title, { title: true });
+  const titleOpportunitySignals = /\b(?:intern|internship)\b/u.test(normalizeSearchText(title))
+    ? new Set(['internship'])
+    : new Set();
+  const description = typeof listing?.description === 'string' ? listing.description : '';
+  const descriptionSenioritySignal = getDescriptionSenioritySignal(description);
+  const descriptionOpportunityMatch = DESCRIPTION_INTERNSHIP_PATTERN.exec(description);
+  const descriptionOpportunitySignal = descriptionOpportunityMatch
+    ? { classification: 'internship', evidence: descriptionOpportunityMatch[0].trim() }
+    : null;
+
+  const inferredSeniority = resolveExperienceDimension({
+    providerSignals: providerSenioritySignals,
+    titleSignals: titleSenioritySignals,
+    descriptionSignal: descriptionSenioritySignal,
+    providerEvidence: providerSeniorityEvidence,
+    title,
+    unknownEvidence: distinctProviderValues.length
+      ? `Provider experience metadata is ambiguous: ${distinctProviderValues.join('; ')}`
+      : 'The source did not state a seniority level, and the title or description has no clear eligibility signal.',
+  });
+  const inferredOpportunityType = resolveExperienceDimension({
+    providerSignals: providerOpportunitySignals,
+    titleSignals: titleOpportunitySignals,
+    descriptionSignal: descriptionOpportunitySignal,
+    providerEvidence: providerOpportunityEvidence,
+    title,
+    unknownEvidence: 'The source did not state an opportunity type, and the title or description does not clearly identify an internship.',
+  });
+  const normalizeSuppliedDimension = (classificationValue, sourceValue, evidenceValue, inferred) => {
+    const classification = EXPERIENCE_CLASSIFICATION_LABELS.get(normalizeSearchText(classificationValue));
+    if (!classification || !EXPERIENCE_CLASSIFICATION_SOURCES.has(sourceValue)) return inferred;
+    return {
+      classification,
+      source: sourceValue,
+      evidence: typeof evidenceValue === 'string' ? evidenceValue : '',
+    };
+  };
+  const seniority = normalizeSuppliedDimension(
+    listing?.experienceSeniority,
+    listing?.experienceSenioritySource,
+    listing?.experienceSeniorityEvidence,
+    inferredSeniority,
+  );
+  const opportunityType = normalizeSuppliedDimension(
+    listing?.experienceOpportunityType,
+    listing?.experienceOpportunityTypeSource,
+    listing?.experienceOpportunityTypeEvidence,
+    inferredOpportunityType,
+  );
+  const primaryClassification = suppliedClassification && suppliedSource
+    ? suppliedClassification
+    : seniority.classification !== 'unknown'
+      ? seniority.classification
+      : opportunityType.classification === 'internship'
+        ? 'internship'
+        : 'unknown';
+  const source = suppliedClassification && suppliedSource
+    ? suppliedSource
+    : seniority.classification !== 'unknown'
+      ? seniority.source
+      : opportunityType.classification === 'internship'
+        ? opportunityType.source
+        : 'unknown';
+  const evidence = suppliedClassification && suppliedSource
+    ? (typeof listing.experienceClassificationEvidence === 'string'
+      ? listing.experienceClassificationEvidence
+      : '')
+    : seniority.classification !== 'unknown'
+      ? seniority.evidence
+      : opportunityType.classification === 'internship'
+        ? opportunityType.evidence
+        : 'Experience and opportunity type are not stated clearly by the source.';
+
+  return {
+    classification: EXPERIENCE_DISPLAY_LABELS.get(primaryClassification) || 'Unknown',
+    source,
+    evidence,
+    opportunityType,
+    seniority,
+  };
+}
+
+export function getExperienceFilterClassificationDetails(listing, experience) {
+  const details = getExperienceClassificationDetails(listing);
+  return normalizeSearchText(experience) === 'internships'
+    ? details.opportunityType
+    : details.seniority;
 }
 
 export function getExperienceClassification(listing) {
-  const supplied = normalizeSearchText(listing?.experienceClassification);
-  if (supplied === 'internship') return 'Internship';
-  if (supplied === 'entry level') return 'Entry-level';
-  if (supplied === 'experienced') return 'Experienced';
-  const explicit = normalizeSearchText(listing?.experienceLevel);
-  const employment = normalizeSearchText(listing?.employmentType);
-  const title = normalizeSearchText(listing?.title);
-  if (/\b(intern|internship)\b/.test(`${explicit} ${employment} ${title}`)) return 'Internship';
-  if (/\b(fresher|graduate|new grad|graduate trainee|apprentice|student researcher|junior|associate|entry level)\b/.test(`${explicit} ${title}`)) {
-    return 'Entry-level';
-  }
-  if (/\b(senior|principal|staff engineer|lead engineer|manager|experienced|mid level)\b/.test(`${explicit} ${title}`)) return 'Experienced';
-  return 'Not stated';
+  return getExperienceClassificationDetails(listing).classification;
+}
+
+export function partitionExperienceClassifications(listings, experience = '') {
+  return listings.reduce((groups, listing) => {
+    const { source } = experience
+      ? getExperienceFilterClassificationDetails(listing, experience)
+      : getExperienceClassificationDetails(listing);
+    if (source === 'provider') groups.providerReported.push(listing);
+    else if (source === 'title') groups.titleInferred.push(listing);
+    else if (source === 'description-inferred') groups.descriptionInferred.push(listing);
+    else groups.unknown.push(listing);
+    return groups;
+  }, { providerReported: [], titleInferred: [], descriptionInferred: [], unknown: [] });
+}
+
+export function partitionExperienceFilterResults(listings, experience = '') {
+  const groups = partitionExperienceClassifications(listings, experience);
+  return {
+    ...groups,
+    confirmed: [...groups.providerReported, ...groups.titleInferred, ...groups.descriptionInferred],
+    confirmedCount: groups.providerReported.length + groups.titleInferred.length + groups.descriptionInferred.length,
+    unconfirmedCount: groups.unknown.length,
+  };
 }
 
 export function getKnownWorkMode(listing) {
@@ -507,14 +765,20 @@ export function groupListingsByCompany(listings) {
 
 export function summarizeCompanyListings(listings) {
   const distinctCompanies = new Set(listings.map((listing) => normalizeSearchText(listing.company)));
-  const classifications = listings.map(getExperienceClassification);
+  const experienceDetails = listings.map(getExperienceClassificationDetails);
+  const seniorityClassifications = experienceDetails.map((details) => details.seniority.classification);
+  const classificationSources = experienceDetails.map((details) => details.source);
   return {
     totalRetrieved: listings.length,
     distinctCompanies: distinctCompanies.size,
-    internships: classifications.filter((classification) => classification === 'Internship').length,
-    entryLevel: classifications.filter((classification) => classification === 'Entry-level').length,
-    experienced: classifications.filter((classification) => classification === 'Experienced').length,
-    unknownExperience: classifications.filter((classification) => classification === 'Not stated').length,
+    internships: experienceDetails.filter((details) => details.opportunityType.classification === 'internship').length,
+    fresherGraduate: seniorityClassifications.filter((classification) => classification === 'fresher/graduate').length,
+    entryLevel: seniorityClassifications.filter((classification) => classification === 'entry-level').length,
+    experienced: seniorityClassifications.filter((classification) => classification === 'experienced').length,
+    unknownExperience: seniorityClassifications.filter((classification) => classification === 'unknown').length,
+    providerReportedExperience: classificationSources.filter((source) => source === 'provider').length,
+    titleInferredExperience: classificationSources.filter((source) => source === 'title').length,
+    descriptionInferredExperience: classificationSources.filter((source) => source === 'description-inferred').length,
     localMatches: listings.filter((listing) => listing.locationMatch === 'local').length,
     remoteGlobal: listings.filter((listing) => listing.locationMatch === 'remote-global').length,
     remoteUnspecified: listings.filter((listing) => listing.locationMatch === 'remote-unspecified').length,
