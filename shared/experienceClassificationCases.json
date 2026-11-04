@@ -120,11 +120,11 @@
       "description": "What we're looking for: 3+ years of experience as a full-stack or frontend-heavy engineer."
     },
     "classification": "experienced",
-    "source": "description-inferred",
+    "source": "description",
     "opportunityType": "unknown",
     "opportunityTypeSource": "unknown",
     "seniority": "experienced",
-    "senioritySource": "description-inferred"
+    "senioritySource": "description"
   },
   {
     "name": "AI Data Scientist similar-role years requirement",
@@ -134,11 +134,11 @@
       "description": "Qualifications: 5+ Years of experience in Similar roles."
     },
     "classification": "experienced",
-    "source": "description-inferred",
+    "source": "description",
     "opportunityType": "unknown",
     "opportunityTypeSource": "unknown",
     "seniority": "experienced",
-    "senioritySource": "description-inferred"
+    "senioritySource": "description"
   },
   {
     "name": "Tier III service role years requirement",
@@ -147,11 +147,11 @@
       "description": "Qualifications: 6+ years of experience providing IT services and end-user support."
     },
     "classification": "experienced",
-    "source": "description-inferred",
+    "source": "description",
     "opportunityType": "unknown",
     "opportunityTypeSource": "unknown",
     "seniority": "experienced",
-    "senioritySource": "description-inferred"
+    "senioritySource": "description"
   },
   {
     "name": "Internship opportunity with entry-level seniority",
@@ -160,7 +160,7 @@
       "employmentType": "Internship",
       "experienceLevel": "Entry-Level, Junior"
     },
-    "classification": "entry-level",
+    "classification": "internship",
     "source": "provider",
     "opportunityType": "internship",
     "opportunityTypeSource": "provider",
@@ -202,11 +202,11 @@
       "description": "No prior experience required."
     },
     "classification": "entry-level",
-    "source": "description-inferred",
+    "source": "description",
     "opportunityType": "unknown",
     "opportunityTypeSource": "unknown",
     "seniority": "entry-level",
-    "senioritySource": "description-inferred"
+    "senioritySource": "description"
   },
   {
     "name": "recent graduates explicitly eligible",
@@ -215,11 +215,11 @@
       "description": "Recent graduates are encouraged to apply."
     },
     "classification": "fresher/graduate",
-    "source": "description-inferred",
+    "source": "description",
     "opportunityType": "unknown",
     "opportunityTypeSource": "unknown",
     "seniority": "fresher/graduate",
-    "senioritySource": "description-inferred"
+    "senioritySource": "description"
   },
   {
     "name": "generic student mention remains unknown",
@@ -274,6 +274,19 @@
     "senioritySource": "unknown"
   },
   {
+    "name": "technology experience alone does not imply entry-level",
+    "listing": {
+      "title": "Software Engineer",
+      "description": "Python experience is not required for this position."
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
     "name": "one year role requirement remains uncertain",
     "listing": {
       "title": "Technical Support Engineer",
@@ -291,6 +304,19 @@
     "listing": {
       "title": "Software Engineer",
       "experienceLevel": "Any"
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "Remotive seniority words in skill tags are not seniority evidence",
+    "listing": {
+      "title": "Software Engineer",
+      "skills": ["Senior", "Entry Level"]
     },
     "classification": "unknown",
     "source": "unknown",
@@ -332,9 +358,22 @@
       "description": "This is a paid internship program on our product team."
     },
     "classification": "internship",
-    "source": "description-inferred",
+    "source": "description",
     "opportunityType": "internship",
-    "opportunityTypeSource": "description-inferred",
+    "opportunityTypeSource": "description",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "description explicitly states this position is an internship",
+    "listing": {
+      "title": "Software Engineer",
+      "description": "This position is an internship."
+    },
+    "classification": "internship",
+    "source": "description",
+    "opportunityType": "internship",
+    "opportunityTypeSource": "description",
     "seniority": "unknown",
     "senioritySource": "unknown"
   },
@@ -343,6 +382,47 @@
     "listing": {
       "title": "Senior Software Engineer",
       "description": "No prior experience required."
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "explicit description internship with entry-level metadata",
+    "listing": {
+      "title": "Software Engineer",
+      "employmentType": "Internship",
+      "experienceLevel": "Entry-Level",
+      "description": "This is an internship position on our engineering team."
+    },
+    "classification": "internship",
+    "source": "provider",
+    "opportunityType": "internship",
+    "opportunityTypeSource": "provider",
+    "seniority": "entry-level",
+    "senioritySource": "provider"
+  },
+  {
+    "name": "conflicting seniority statements in description remain unknown",
+    "listing": {
+      "title": "Software Engineer",
+      "description": "This is an entry-level position requiring 5+ years of experience in similar roles."
+    },
+    "classification": "unknown",
+    "source": "unknown",
+    "opportunityType": "unknown",
+    "opportunityTypeSource": "unknown",
+    "seniority": "unknown",
+    "senioritySource": "unknown"
+  },
+  {
+    "name": "internship description with explicit negation remains unknown",
+    "listing": {
+      "title": "Software Engineer",
+      "description": "This is not an internship position."
     },
     "classification": "unknown",
     "source": "unknown",

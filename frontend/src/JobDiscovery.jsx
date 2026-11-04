@@ -337,10 +337,10 @@ export function JobDiscovery({
     const formatExperienceEvidence = (detail, label, value = detail.classification) => {
       if (detail.source === 'provider') return `${label}: ${value} — reported by source (${detail.evidence}).`;
       if (detail.source === 'title') return `${label}: ${value} — inferred from title "${detail.evidence}".`;
-      if (detail.source === 'description-inferred') {
+      if (detail.source === 'description' || detail.source === 'description-inferred') {
         return `${label}: ${value} — inferred from description "${detail.evidence}".`;
       }
-      return `${label}: Unknown — ${detail.evidence}`;
+      return `${label}: Unknown / Not stated — ${detail.evidence}`;
     };
     const opportunityTypeLabel = experienceDetails.opportunityType.classification === 'internship'
       ? 'Internship'
@@ -351,14 +351,14 @@ export function JobDiscovery({
       'fresher/graduate': 'Fresher/Graduate',
       'entry-level': 'Entry-level',
       experienced: 'Experienced',
-    })[experienceDetails.seniority.classification] || 'Unknown';
+    })[experienceDetails.seniority.classification] || 'Unknown / Not stated';
     const opportunityTypeBadge = experienceDetails.opportunityType.source === 'unknown'
-      ? 'Opportunity type: Unknown'
+      ? 'Opportunity type: Unknown / Not stated'
       : `Opportunity type: ${opportunityTypeLabel} (${experienceDetails.opportunityType.source === 'provider'
         ? 'source-reported'
         : experienceDetails.opportunityType.source === 'title' ? 'title-inferred' : 'description-inferred'})`;
     const seniorityBadge = experienceDetails.seniority.source === 'unknown'
-      ? 'Seniority: Unknown'
+      ? 'Seniority: Unknown / Not stated'
       : `Seniority: ${seniorityLabel} (${experienceDetails.seniority.source === 'provider'
         ? 'source-reported'
         : experienceDetails.seniority.source === 'title' ? 'title-inferred' : 'description-inferred'})`;

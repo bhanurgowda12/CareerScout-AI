@@ -807,14 +807,18 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(
             [(job["id"], job["experienceSeniority"], job["experienceSenioritySource"]) for job in experienced],
-            [("51", "experienced", "description-inferred"), ("53", "unknown", "unknown")],
+            [("51", "experienced", "description"), ("53", "unknown", "unknown")],
         )
         self.assertEqual(
             [(job["id"], job["experienceSeniority"], job["experienceSenioritySource"]) for job in entry_level],
-            [("52", "entry-level", "description-inferred"), ("53", "unknown", "unknown")],
+            [("52", "entry-level", "description"), ("53", "unknown", "unknown")],
         )
         self.assertIn("3+ years of experience", experienced[0]["experienceSeniorityEvidence"])
-        self.assertEqual(entry_level[0]["experienceClassificationSource"], "description-inferred")
+        self.assertEqual(entry_level[0]["experienceClassificationSource"], "description")
+        self.assertEqual(
+            experienced[0]["experienceSeniorityEvidence"],
+            "3+ years of experience as a full-stack or frontend-heavy engineer",
+        )
 
     def test_provider_normalizers_preserve_available_experience_metadata(self):
         remotive = main._normalize_remotive_job(self.listing(

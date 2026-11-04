@@ -458,11 +458,12 @@ Opportunity type and seniority are classified separately. A job may be an intern
 | --- | --- |
 | Source-reported | Provider metadata clearly identifies the classification. |
 | Title-inferred | Clear title wording indicates an internship or seniority. |
-| Description-inferred | Explicit description wording indicates eligibility or seniority. |
+| Description-inferred | Explicit description wording indicates eligibility or seniority. API provenance is `description`; a short matching excerpt is included in evidence fields and shown in the listing details. |
 | Unknown | Evidence is absent, ambiguous, or conflicting. |
 
 - Internship can be classified from clear provider fields, an internship title, or explicit internship wording.
 - Fresher/graduate, entry-level, and experienced labels use provider values or conservative title/description signals.
+- Description rules require clear role-level evidence; incidental student mentions, technology-only experience, vague one-year requirements, and conflicting clues remain unknown.
 - “Full-time” alone does not establish seniority.
 - Unknown results remain accessible in the unconfirmed group and are excluded from confirmed-match counts.
 
@@ -836,7 +837,7 @@ The `GET` endpoint accepts the same fields as query parameters; list fields can 
 | `remoteOnly` | Boolean | Restricts records known not to be remote. |
 | `limit` | Integer | Number of returned records; 1–500. |
 
-The response contains `jobs`, `fetchedAt`, `cached`, source names, provider status/errors, partial-result metadata, `totalRetrieved`, company metadata, and official-versus-aggregator listing counts. Provider failures may produce partial status or an HTTP error.
+The response contains `jobs`, `fetchedAt`, `cached`, source names, provider status/errors, partial-result metadata, `totalRetrieved`, company metadata, and official-versus-aggregator listing counts. Each job also returns overall, opportunity-type, and seniority classifications with provenance and evidence fields; description-derived provenance is `description`. Provider failures may produce partial status or an HTTP error.
 
 ### 14.2 Learning Resources Request and Response
 

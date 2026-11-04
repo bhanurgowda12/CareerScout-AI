@@ -484,10 +484,11 @@ function getExperienceSignals(value, { title = false } = {}) {
     .map(([classification]) => classification));
 }
 
-const DESCRIPTION_INTERNSHIP_PATTERN = /\b(?:internship\s+(?:position|role|opportunity|program)|summer\s+internship|(?:as|working\s+as)\s+an?\s+intern|intern\s+(?:position|role|opportunity))\b/iu;
+const DESCRIPTION_INTERNSHIP_PATTERN = /\b(?:internship\s+(?:position|role|opportunity|program)|summer\s+internship|(?:as|working\s+as)\s+an?\s+intern|intern\s+(?:position|role|opportunity)|(?:this|the|advertised)\s+(?:position|role|opportunity)\s+(?:is|will\s+be)\s+(?:an?\s+)?(?:paid\s+)?internship|this\s+is\s+(?:an?\s+)?(?:paid\s+)?internship)\b/iu;
 const DESCRIPTION_FRESHER_PATTERN = /\b(?:open\s+to|welcome(?:d)?\s+to\s+apply|encouraged\s+to\s+apply|designed\s+for|seeking|looking\s+for|ideal\s+for|intended\s+for|accept(?:ing)?\s+applications\s+from)\s+(?:recent\s+|new\s+)?(?:college\s+)?(?:graduates?|grads?|freshers?)\b|\b(?:recent|new)\s+(?:college\s+)?(?:graduates?|grads?|freshers?)\s+(?:are\s+)?(?:welcome|encouraged|eligible|invited)\b/iu;
-const DESCRIPTION_NO_EXPERIENCE_PATTERN = /\b(?:no\s+(?:(?:prior|previous|professional)\s+)?experience\s+(?:is\s+)?(?:required|needed|necessary)|experience\s+not\s+required)\b/iu;
+const DESCRIPTION_NO_EXPERIENCE_PATTERN = /(?:^|[\r\n]|[.!?;:,]\s*|[-*]\s*)(?:no\s+(?:(?:prior|previous|professional)\s+)?experience\s+(?:is\s+)?(?:required|needed|necessary)|(?:(?:prior|previous|professional)\s+)?experience\s+(?:is\s+)?not\s+required)\b/iu;
 const DESCRIPTION_ENTRY_LEVEL_PATTERN = /\bentry[- ]level\s+(?:position|role|opportunity)\b/iu;
+const DESCRIPTION_NEGATED_INTERNSHIP_PATTERN = /\b(?:not|isn't|is\s+not|is\s+never)\s+(?:an?\s+)?(?:paid\s+)?internship(?:\s+(?:position|role|opportunity|program))?\b/iu;
 const DESCRIPTION_ROLE_EXPERIENCE_PATTERN = /\b(?<years>\d+(?:\.\d+)?\+?|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\s+(?:of\s+)?experience\s+(?:(?:as|working\s+as)\s+(?:an?\s+)?[^.;\n]{1,100}\b(?:engineer|developer|analyst|scientist|architect|designer|administrator|technician|specialist|consultant|manager|professional|role|position)\b|in\s+(?:similar|related)\s+roles?\b|in\s+(?:an?\s+)?[^.;\n]{1,80}\b(?:role|position)\b|providing\s+[^.;\n]{1,100}\b(?:services?|support|operations|engineering|development|management)\b)/iu;
 const EXPERIENCE_NUMBER_WORDS = new Map([
   ['one', 1], ['two', 2], ['three', 3], ['four', 4], ['five', 5],
@@ -496,29 +497,43 @@ const EXPERIENCE_NUMBER_WORDS = new Map([
 const EXPERIENCE_CLASSIFICATION_SOURCES = new Set([
   'provider',
   'title',
+  'description',
   'description-inferred',
   'unknown',
 ]);
 
 function getDescriptionSenioritySignal(description = '') {
-  const entryLevelMatch = DESCRIPTION_NO_EXPERIENCE_PATTERN.exec(description)
-    || DESCRIPTION_ENTRY_LEVEL_PATTERN.exec(description);
-  if (entryLevelMatch) {
-    return { classification: 'entry-level', evidence: entryLevelMatch[0].trim() };
+  const matches = [];
+  for (const [classification, pattern] of [
+    ['entry-level', DESCRIPTION_NO_EXPERIENCE_PATTERN],
+    ['entry-level', DESCRIPTION_ENTRY_LEVEL_PATTERN],
+    ['fresher/graduate', DESCRIPTION_FRESHER_PATTERN],
+  ]) {
+    matches.push(...[...description.matchAll(new RegExp(pattern.source, `${pattern.flags}g`))]
+      .map((match) => ({ classification, match })));
   }
-  const fresherMatch = DESCRIPTION_FRESHER_PATTERN.exec(description);
-  if (fresherMatch) {
-    return { classification: 'fresher/graduate', evidence: fresherMatch[0].trim() };
-  }
-  const experienceMatch = DESCRIPTION_ROLE_EXPERIENCE_PATTERN.exec(description);
-  if (experienceMatch) {
-    const rawYears = experienceMatch.groups.years.toLocaleLowerCase().replace(/\+$/, '');
+  for (const match of description.matchAll(new RegExp(
+    DESCRIPTION_ROLE_EXPERIENCE_PATTERN.source,
+    `${DESCRIPTION_ROLE_EXPERIENCE_PATTERN.flags}g`,
+  ))) {
+    const rawYears = match.groups.years.toLocaleLowerCase().replace(/\+$/, '');
     const years = EXPERIENCE_NUMBER_WORDS.get(rawYears) ?? Number.parseFloat(rawYears);
-    if (years >= 2) {
-      return { classification: 'experienced', evidence: experienceMatch[0].trim() };
-    }
+    if (years >= 2) matches.push({ classification: 'experienced', match });
   }
-  return null;
+
+  const classifications = new Set(matches.map(({ classification }) => classification));
+  if (!classifications.size) return null;
+  if (classifications.size > 1) {
+    return {
+      classification: 'unknown',
+      evidence: matches.slice(0, 2).map(({ match }) => match[0].trim()).join('; '),
+    };
+  }
+  const classification = [...classifications][0];
+  return {
+    classification,
+    evidence: matches.find((item) => item.classification === classification).match[0].trim(),
+  };
 }
 
 function resolveExperienceDimension({
@@ -529,6 +544,13 @@ function resolveExperienceDimension({
   title,
   unknownEvidence,
 }) {
+  if (descriptionSignal?.classification === 'unknown') {
+    return {
+      classification: 'unknown',
+      source: 'unknown',
+      evidence: `Description contains conflicting seniority evidence: ${descriptionSignal.evidence}`,
+    };
+  }
   if (providerSignals.size > 1) {
     return { classification: 'unknown', source: 'unknown', evidence: 'Provider metadata indicates conflicting values.' };
   }
@@ -553,7 +575,7 @@ function resolveExperienceDimension({
   if (descriptionSignal) {
     return {
       classification: descriptionSignal.classification,
-      source: 'description-inferred',
+      source: 'description',
       evidence: descriptionSignal.evidence,
     };
   }
@@ -608,8 +630,15 @@ export function getExperienceClassificationDetails(listing) {
   const description = typeof listing?.description === 'string' ? listing.description : '';
   const descriptionSenioritySignal = getDescriptionSenioritySignal(description);
   const descriptionOpportunityMatch = DESCRIPTION_INTERNSHIP_PATTERN.exec(description);
+  const descriptionInternshipNegation = DESCRIPTION_NEGATED_INTERNSHIP_PATTERN.exec(description);
   const descriptionOpportunitySignal = descriptionOpportunityMatch
-    ? { classification: 'internship', evidence: descriptionOpportunityMatch[0].trim() }
+    ? {
+      classification: descriptionInternshipNegation ? 'unknown' : 'internship',
+      evidence: [descriptionOpportunityMatch, descriptionInternshipNegation]
+        .filter(Boolean)
+        .map((match) => match[0].trim())
+        .join('; '),
+    }
     : null;
 
   const inferredSeniority = resolveExperienceDimension({
@@ -653,27 +682,27 @@ export function getExperienceClassificationDetails(listing) {
   );
   const primaryClassification = suppliedClassification && suppliedSource
     ? suppliedClassification
-    : seniority.classification !== 'unknown'
-      ? seniority.classification
-      : opportunityType.classification === 'internship'
+    : opportunityType.classification === 'internship'
         ? 'internship'
-        : 'unknown';
+        : seniority.classification !== 'unknown'
+          ? seniority.classification
+          : 'unknown';
   const source = suppliedClassification && suppliedSource
     ? suppliedSource
-    : seniority.classification !== 'unknown'
-      ? seniority.source
-      : opportunityType.classification === 'internship'
+    : opportunityType.classification === 'internship'
         ? opportunityType.source
-        : 'unknown';
+        : seniority.classification !== 'unknown'
+          ? seniority.source
+          : 'unknown';
   const evidence = suppliedClassification && suppliedSource
     ? (typeof listing.experienceClassificationEvidence === 'string'
       ? listing.experienceClassificationEvidence
       : '')
-    : seniority.classification !== 'unknown'
-      ? seniority.evidence
-      : opportunityType.classification === 'internship'
+    : opportunityType.classification === 'internship'
         ? opportunityType.evidence
-        : 'Experience and opportunity type are not stated clearly by the source.';
+        : seniority.classification !== 'unknown'
+          ? seniority.evidence
+          : 'Experience and opportunity type are not stated clearly by the source.';
 
   return {
     classification: EXPERIENCE_DISPLAY_LABELS.get(primaryClassification) || 'Unknown',
@@ -702,7 +731,7 @@ export function partitionExperienceClassifications(listings, experience = '') {
       : getExperienceClassificationDetails(listing);
     if (source === 'provider') groups.providerReported.push(listing);
     else if (source === 'title') groups.titleInferred.push(listing);
-    else if (source === 'description-inferred') groups.descriptionInferred.push(listing);
+    else if (source === 'description' || source === 'description-inferred') groups.descriptionInferred.push(listing);
     else groups.unknown.push(listing);
     return groups;
   }, { providerReported: [], titleInferred: [], descriptionInferred: [], unknown: [] });
@@ -778,7 +807,9 @@ export function summarizeCompanyListings(listings) {
     unknownExperience: seniorityClassifications.filter((classification) => classification === 'unknown').length,
     providerReportedExperience: classificationSources.filter((source) => source === 'provider').length,
     titleInferredExperience: classificationSources.filter((source) => source === 'title').length,
-    descriptionInferredExperience: classificationSources.filter((source) => source === 'description-inferred').length,
+    descriptionInferredExperience: classificationSources.filter(
+      (source) => source === 'description' || source === 'description-inferred',
+    ).length,
     localMatches: listings.filter((listing) => listing.locationMatch === 'local').length,
     remoteGlobal: listings.filter((listing) => listing.locationMatch === 'remote-global').length,
     remoteUnspecified: listings.filter((listing) => listing.locationMatch === 'remote-unspecified').length,

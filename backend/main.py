@@ -922,7 +922,9 @@ _EXPERIENCE_TITLE_PATTERNS = (
 )
 _DESCRIPTION_INTERNSHIP_PATTERN = re.compile(
     r"\b(?:internship\s+(?:position|role|opportunity|program)|summer\s+internship|"
-    r"(?:as|working\s+as)\s+an?\s+intern|intern\s+(?:position|role|opportunity))\b",
+    r"(?:as|working\s+as)\s+an?\s+intern|intern\s+(?:position|role|opportunity)|"
+    r"(?:this|the|advertised)\s+(?:position|role|opportunity)\s+(?:is|will\s+be)\s+"
+    r"(?:an?\s+)?(?:paid\s+)?internship|this\s+is\s+(?:an?\s+)?(?:paid\s+)?internship)\b",
     re.IGNORECASE,
 )
 _DESCRIPTION_FRESHER_PATTERN = re.compile(
@@ -934,12 +936,19 @@ _DESCRIPTION_FRESHER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _DESCRIPTION_NO_EXPERIENCE_PATTERN = re.compile(
-    r"\b(?:no\s+(?:(?:prior|previous|professional)\s+)?experience\s+(?:is\s+)?"
-    r"(?:required|needed|necessary)|experience\s+not\s+required)\b",
+    r"(?:^|[\r\n]|[.!?;:,]\s*|[-*]\s*)"
+    r"(?:no\s+(?:(?:prior|previous|professional)\s+)?experience\s+(?:is\s+)?"
+    r"(?:required|needed|necessary)|(?:(?:prior|previous|professional)\s+)?"
+    r"experience\s+(?:is\s+)?not\s+required)\b",
     re.IGNORECASE,
 )
 _DESCRIPTION_ENTRY_LEVEL_PATTERN = re.compile(
     r"\bentry[- ]level\s+(?:position|role|opportunity)\b",
+    re.IGNORECASE,
+)
+_DESCRIPTION_NEGATED_INTERNSHIP_PATTERN = re.compile(
+    r"\b(?:not|isn't|is\s+not|is\s+never)\s+(?:an?\s+)?(?:paid\s+)?internship"
+    r"(?:\s+(?:position|role|opportunity|program))?\b",
     re.IGNORECASE,
 )
 _DESCRIPTION_ROLE_EXPERIENCE_PATTERN = re.compile(
@@ -981,20 +990,35 @@ def _experience_signals(value, *, title=False):
 
 
 def _description_seniority_signal(description):
-    if _DESCRIPTION_NO_EXPERIENCE_PATTERN.search(description) or _DESCRIPTION_ENTRY_LEVEL_PATTERN.search(description):
-        return "entry-level", _DESCRIPTION_NO_EXPERIENCE_PATTERN.search(description) or _DESCRIPTION_ENTRY_LEVEL_PATTERN.search(description)
-    if _DESCRIPTION_FRESHER_PATTERN.search(description):
-        return "fresher/graduate", _DESCRIPTION_FRESHER_PATTERN.search(description)
-    match = _DESCRIPTION_ROLE_EXPERIENCE_PATTERN.search(description)
-    if match:
+    matches = []
+    for classification, pattern in (
+        ("entry-level", _DESCRIPTION_NO_EXPERIENCE_PATTERN),
+        ("entry-level", _DESCRIPTION_ENTRY_LEVEL_PATTERN),
+        ("fresher/graduate", _DESCRIPTION_FRESHER_PATTERN),
+    ):
+        matches.extend((classification, match) for match in pattern.finditer(description))
+
+    for match in _DESCRIPTION_ROLE_EXPERIENCE_PATTERN.finditer(description):
         years = match.group("years").casefold().rstrip("+")
         try:
             years_value = float(years) if years not in _NUMBER_WORDS else _NUMBER_WORDS[years]
         except ValueError:
             years_value = 0
         if years_value >= 2:
-            return "experienced", match
-    return "", None
+            matches.append(("experienced", match))
+
+    classifications = {classification for classification, _match in matches}
+    if not classifications:
+        return "", None
+    if len(classifications) > 1:
+        evidence = "; ".join(match.group(0).strip() for _classification, match in matches[:2])
+        return "unknown", evidence
+    classification = next(iter(classifications))
+    return classification, next(
+        match.group(0).strip()
+        for level, match in matches
+        if level == classification
+    )
 
 
 def _dimension_result(classification="", source="", evidence=""):
@@ -1006,6 +1030,8 @@ def _dimension_result(classification="", source="", evidence=""):
 
 
 def _resolve_experience_dimension(provider_signals, title_signals, description_signal, provider_evidence, title, unknown_evidence):
+    if description_signal and description_signal["classification"] == "unknown":
+        return _dimension_result(evidence=f"Description contains conflicting seniority evidence: {description_signal['evidence']}")
     if len(provider_signals) > 1:
         return _dimension_result(evidence="Provider metadata indicates conflicting values.")
     if provider_signals:
@@ -1025,7 +1051,7 @@ def _resolve_experience_dimension(provider_signals, title_signals, description_s
     if description_signal:
         return _dimension_result(
             description_signal["classification"],
-            "description-inferred",
+            "description",
             description_signal["evidence"],
         )
     return _dimension_result(evidence=unknown_evidence)
@@ -1086,16 +1112,21 @@ def _classify_experience_level(listing):
     ) else set()
     description = listing.get("description", "")
     description = description if isinstance(description, str) else ""
-    description_seniority, description_seniority_match = _description_seniority_signal(description)
+    description_seniority, description_seniority_evidence = _description_seniority_signal(description)
     description_opportunity_match = _DESCRIPTION_INTERNSHIP_PATTERN.search(description)
+    description_internship_negation = _DESCRIPTION_NEGATED_INTERNSHIP_PATTERN.search(description)
+    description_opportunity_signal = {
+        "classification": "unknown" if description_internship_negation else "internship",
+        "evidence": "; ".join(
+            match.group(0).strip()
+            for match in (description_opportunity_match, description_internship_negation)
+            if match
+        ),
+    } if description_opportunity_match else None
     description_seniority_signal = {
         "classification": description_seniority,
-        "evidence": description_seniority_match.group(0).strip(),
-    } if description_seniority and description_seniority_match else None
-    description_opportunity_signal = {
-        "classification": "internship",
-        "evidence": description_opportunity_match.group(0).strip(),
-    } if description_opportunity_match else None
+        "evidence": description_seniority_evidence,
+    } if description_seniority and description_seniority_evidence else None
 
     seniority = _resolve_experience_dimension(
         provider_seniority_signals,
@@ -1114,10 +1145,10 @@ def _classify_experience_level(listing):
         "The source did not state an opportunity type, and the title or description does not clearly identify an internship.",
     )
 
-    if seniority["classification"] != "unknown":
-        primary = seniority
-    elif opportunity_type["classification"] == "internship":
+    if opportunity_type["classification"] == "internship":
         primary = opportunity_type
+    elif seniority["classification"] != "unknown":
+        primary = seniority
     else:
         primary = _dimension_result(evidence="Experience and opportunity type are not stated clearly by the source.")
     return {
