@@ -11,7 +11,7 @@ import {
   getCategorySearchTerms,
   getAllJobRoles,
   getKnownEmploymentTypes,
-  getExperienceClassification,
+  getExperienceClassificationDetails,
   getKnownWorkMode,
   getLocationMatch,
   getRoleSearchTerms,
@@ -22,6 +22,7 @@ import {
   JOB_SKILLS,
   MAX_JOB_LOCATION_LENGTH,
   MAX_JOB_SEARCH_LENGTH,
+  partitionExperienceFilterResults,
   summarizeCompanyListings,
   WORK_MODES,
   EXPERIENCE_FILTERS,
@@ -151,6 +152,12 @@ export function JobDiscovery({
     () => createExternalJobSearchLinks(externalSearchTerm, location),
     [externalSearchTerm, location],
   );
+  const experienceFilterActive = experience !== 'All opportunities';
+  const experienceFilterResults = useMemo(
+    () => partitionExperienceFilterResults(visibleJobs, experienceFilterActive ? experience : ''),
+    [visibleJobs, experience, experienceFilterActive],
+  );
+  const confirmedExperienceListings = new Set(experienceFilterResults.confirmed);
   const companySummary = useMemo(() => summarizeCompanyListings(visibleJobs), [visibleJobs]);
   const unknownWorkModeMatches = workMode === 'Any work mode'
     ? 0
@@ -178,6 +185,15 @@ export function JobDiscovery({
       },
     ]
     : [{ key: 'all', title: '', listings: visibleJobs }];
+  const resultLocationSections = experienceFilterActive
+    ? locationSections.map((section) => ({
+      ...section,
+      listings: section.listings.filter((listing) => confirmedExperienceListings.has(listing)),
+    }))
+    : locationSections;
+  const unconfirmedCompanyGroups = groupByCompany
+    ? Object.entries(groupListingsByCompany(experienceFilterResults.unknown))
+    : [['', experienceFilterResults.unknown]];
 
   async function searchJobs(event) {
     event.preventDefault();
@@ -317,6 +333,35 @@ export function JobDiscovery({
 
   function renderListing(job) {
     const publishedDate = formatDiscoveryDate(job.publicationDate);
+    const experienceDetails = getExperienceClassificationDetails(job);
+    const formatExperienceEvidence = (detail, label, value = detail.classification) => {
+      if (detail.source === 'provider') return `${label}: ${value} — reported by source (${detail.evidence}).`;
+      if (detail.source === 'title') return `${label}: ${value} — inferred from title "${detail.evidence}".`;
+      if (detail.source === 'description' || detail.source === 'description-inferred') {
+        return `${label}: ${value} — inferred from description "${detail.evidence}".`;
+      }
+      return `${label}: Unknown / Not stated — ${detail.evidence}`;
+    };
+    const opportunityTypeLabel = experienceDetails.opportunityType.classification === 'internship'
+      ? 'Internship'
+      : experienceDetails.opportunityType.classification === 'non-internship'
+        ? job.employmentType || 'Non-internship'
+        : 'Unknown';
+    const seniorityLabel = ({
+      'fresher/graduate': 'Fresher/Graduate',
+      'entry-level': 'Entry-level',
+      experienced: 'Experienced',
+    })[experienceDetails.seniority.classification] || 'Unknown / Not stated';
+    const opportunityTypeBadge = experienceDetails.opportunityType.source === 'unknown'
+      ? 'Opportunity type: Unknown / Not stated'
+      : `Opportunity type: ${opportunityTypeLabel} (${experienceDetails.opportunityType.source === 'provider'
+        ? 'source-reported'
+        : experienceDetails.opportunityType.source === 'title' ? 'title-inferred' : 'description-inferred'})`;
+    const seniorityBadge = experienceDetails.seniority.source === 'unknown'
+      ? 'Seniority: Unknown / Not stated'
+      : `Seniority: ${seniorityLabel} (${experienceDetails.seniority.source === 'provider'
+        ? 'source-reported'
+        : experienceDetails.seniority.source === 'title' ? 'title-inferred' : 'description-inferred'})`;
     const comparison = profileState === 'ready' && comparisonJob === (job.id || job.url)
       ? createJobPreparationRoadmap(job, profile || {}, roadmapWeeks).requirements
       : null;
@@ -332,16 +377,21 @@ export function JobDiscovery({
               <p>{job.company}</p>
               <h3>{job.title}</h3>
             </div>
-            <span className="job-discovery-badge">{job.sourceLabel || job.source || 'Provider source'}</span>
+            <div className="job-discovery-card-badges">
+              <span className="job-discovery-badge">{job.sourceLabel || job.source || 'Provider source'}</span>
+              <span className={`job-discovery-experience-badge job-discovery-experience-badge--${experienceDetails.opportunityType.source}`}>
+                {opportunityTypeBadge}
+              </span>
+              <span className={`job-discovery-experience-badge job-discovery-experience-badge--${experienceDetails.seniority.source}`}>
+                {seniorityBadge}
+              </span>
+            </div>
           </header>
           <dl>
             <div><dt>Location</dt><dd>{job.location || 'Not provided by source'}</dd></div>
             <div><dt>Work mode</dt><dd>{job.workMode || getKnownWorkMode(job) || 'Unknown — not stated by source'}</dd></div>
-            <div><dt>Experience</dt><dd>{job.experienceLevel || (
-              getExperienceClassification(job) === 'Not stated'
-                ? 'Not stated by source'
-                : `${getExperienceClassification(job)} (inferred from title or type)`
-            )}</dd></div>
+            <div><dt>Opportunity type</dt><dd>{formatExperienceEvidence(experienceDetails.opportunityType, 'Opportunity type', opportunityTypeLabel)}</dd></div>
+            <div><dt>Seniority</dt><dd>{formatExperienceEvidence(experienceDetails.seniority, 'Seniority', seniorityLabel)}</dd></div>
             <div><dt>Employment</dt><dd>{job.employmentType || 'Unknown — not stated by source'}</dd></div>
             <div><dt>Salary</dt><dd>{job.salary || 'Not provided by source'}</dd></div>
             <div><dt>Published</dt><dd>{publishedDate
@@ -581,13 +631,13 @@ export function JobDiscovery({
           </button>
         </div>
         <p className="job-discovery-search-guidance">
-          Skills match listing titles, descriptions, categories, or provider skill tags. Specific work-mode and employment filters keep listings with missing metadata visible as unknown; those listings are not confirmed matches.
+          Skills match listing titles, descriptions, categories, or provider skill tags. Experience filters separate source-reported levels from conservative title and description inferences and keep unknown listings in a distinct unconfirmed group. Opportunity type (such as internship) is classified independently from seniority. Ambiguous terms such as Associate or generic Trainee remain unknown. Specific work-mode and employment filters also keep listings with missing metadata visible as unknown; those listings are not confirmed matches.
         </p>
         {validationError && <p className="job-discovery-error" id="job-discovery-validation-error" role="alert">{validationError}</p>}
       </form>
 
       <aside className="job-discovery-source-note">
-        <p><strong>Live listings:</strong> CareerScout queries <a href="https://remotive.com/remote-jobs" target="_blank" rel="noopener noreferrer">Remotive</a> and the public <a href="https://jobicy.com/jobs-rss-feed" target="_blank" rel="noopener noreferrer">Jobicy API</a> (remote-focused aggregators). Jobicy results use cursor pagination within a bounded request limit. Public Greenhouse, Lever, and Ashby company boards are searched only when their company board IDs are configured by the backend operator. Results are not a complete inventory of openings. Listings with unstated experience are kept labeled as uncertain rather than assumed entry-level.</p>
+        <p><strong>Live listings:</strong> CareerScout queries <a href="https://remotive.com/remote-jobs" target="_blank" rel="noopener noreferrer">Remotive</a> and the public <a href="https://jobicy.com/jobs-rss-feed" target="_blank" rel="noopener noreferrer">Jobicy API</a> (remote-focused aggregators). Jobicy results use cursor pagination within a bounded request limit. Public Greenhouse, Lever, and Ashby company boards are searched only when their company board IDs are configured by the backend operator. Results are not a complete inventory of openings. Clear title and description signals are labeled as inferences, provider levels as source-reported, and unknown experience stays visible in a separate unconfirmed group when an experience filter is active.</p>
       </aside>
       {providerErrors.length > 0 && hasFetched && (
         <div className="job-discovery-partial-note" role="status">
@@ -596,11 +646,24 @@ export function JobDiscovery({
       )}
       {!loading && hasSearched && hasFetched && (
         <aside className="job-discovery-coverage" aria-label="Job source coverage" aria-live="polite">
-          <p><strong>{visibleJobs.length}</strong> matching listings returned from <strong>{companySummary.distinctCompanies}</strong> represented companies.</p>
           <p>
-            Classification from available listing evidence: {companySummary.internships} internship
-            {companySummary.internships === 1 ? '' : 's'}, {companySummary.entryLevel} fresher/entry-level,
-            {' '}{companySummary.experienced} experienced, and {companySummary.unknownExperience} with experience not stated.
+            <strong>{experienceFilterActive
+              ? experienceFilterResults.confirmedCount
+              : visibleJobs.length}</strong>
+            {experienceFilterActive ? ' confirmed matches' : ' listings shown'}
+            {' '}from <strong>{companySummary.distinctCompanies}</strong> represented companies.
+            {experienceFilterActive && ` ${experienceFilterResults.unconfirmedCount} unconfirmed listings are available separately.`}
+          </p>
+          <p>
+            Experience classifications: {companySummary.internships} internship
+            {companySummary.internships === 1 ? '' : 's'}, {companySummary.fresherGraduate} fresher/graduate,
+            {', '}{companySummary.entryLevel} entry-level, {companySummary.experienced} experienced, and
+            {' '}{companySummary.unknownExperience} unknown/not stated by seniority; opportunity type and seniority are independent classifications.
+          </p>
+          <p>
+            Evidence: {companySummary.providerReportedExperience} source-reported,
+            {' '}{companySummary.titleInferredExperience} inferred from titles,
+            {' '}{companySummary.descriptionInferredExperience} inferred from descriptions, and unknown listings are not counted as confirmed matches.
           </p>
           {unknownWorkModeMatches > 0 && (
             <p>
@@ -625,7 +688,7 @@ export function JobDiscovery({
               <li key={`${provider.name}:${index}`}>
                 {provider.name}: {provider.status === 'error' ? 'unavailable' : provider.status === 'empty' ? 'available; no listings returned' : provider.status === 'partial' ? 'partially available' : 'available'}
                 {Number.isFinite(provider.listingCount) ? ` · ${provider.listingCount} listings retrieved` : ''}
-                    {Number.isFinite(provider.matchedCount) ? ` · ${visibleJobs.filter((job) => job.source === provider.name).length} matching listings shown` : ''}
+                    {Number.isFinite(provider.matchedCount) ? ` · ${visibleJobs.filter((job) => job.source === provider.name).length} listings shown for current filters` : ''}
               </li>
             ))}
           </ul>
@@ -718,9 +781,11 @@ export function JobDiscovery({
             <div>
               <p className="eyebrow">Listings returned by {sources.join(', ') || 'configured sources'}</p>
               <h2 id="job-discovery-results-title">
-                {searchMode === 'company'
-                  ? `${visibleJobs.length} listings returned for ${companyProfile?.officialName || companyQuery.trim()}`
-                  : `${visibleJobs.length} ${visibleJobs.length === 1 ? 'listing' : 'listings'} returned`}
+                {experienceFilterActive
+                  ? `${experienceFilterResults.confirmedCount} confirmed ${experienceFilterResults.confirmedCount === 1 ? 'match' : 'matches'}${searchMode === 'company' ? ` for ${companyProfile?.officialName || companyQuery.trim()}` : ''}`
+                  : searchMode === 'company'
+                  ? `${visibleJobs.length} listings shown for ${companyProfile?.officialName || companyQuery.trim()}`
+                  : `${visibleJobs.length} ${visibleJobs.length === 1 ? 'listing' : 'listings'} shown`}
               </h2>
             </div>
             {fetchedAt && <p className="job-discovery-updated">{isCached ? 'Cached results' : 'Provider data fetched'} · {formatDiscoveryDate(fetchedAt)}</p>}
@@ -728,9 +793,18 @@ export function JobDiscovery({
           <p className="job-discovery-results-note">
             Counts describe listings retrieved from the listed sources, not all current openings.
               {companySummary.unknownExperience > 0
-                ? ` Experience level was not supplied for ${companySummary.unknownExperience} returned ${companySummary.unknownExperience === 1 ? 'listing' : 'listings'}; these remain labeled as not stated.`
+                ? ` Experience level is unknown for ${companySummary.unknownExperience} shown ${companySummary.unknownExperience === 1 ? 'listing' : 'listings'}; these remain accessible in the separate unknown section for experience filters.`
               : ''}
+              {' '}Source-reported levels and title- or description-based inferences are labeled separately; unknown listings are not counted as confirmed matches.
           </p>
+          {experienceFilterActive && (
+            <div className="job-discovery-experience-counts" aria-label="Experience filter result counts">
+              <span><strong>Source-reported matches:</strong> {experienceFilterResults.providerReported.length}</span>
+              <span><strong>Title-inferred matches:</strong> {experienceFilterResults.titleInferred.length}</span>
+              <span><strong>Description-inferred matches:</strong> {experienceFilterResults.descriptionInferred.length}</span>
+              <span><strong>Unconfirmed listings:</strong> {experienceFilterResults.unconfirmedCount}</span>
+            </div>
+          )}
           <div className="job-discovery-result-tools">
             {searchMode === 'jobs' && (
               <label className="form-field" htmlFor="job-discovery-company">
@@ -752,22 +826,73 @@ export function JobDiscovery({
               <span>Group by company</span>
             </label>
           </div>
-          {locationSections.map((locationSection) => {
-            const groups = groupByCompany
-              ? Object.entries(groupListingsByCompany(locationSection.listings))
-              : [['', locationSection.listings]];
+          {resultLocationSections.map((locationSection) => {
+            const evidenceGroups = !experienceFilterActive
+              ? [{ key: 'all', title: '', listings: locationSection.listings }]
+              : (() => {
+                const partitioned = partitionExperienceFilterResults(locationSection.listings, experience);
+                return [
+                  {
+                    key: 'provider-reported',
+                    title: 'Source-reported matches',
+                    listings: partitioned.providerReported,
+                  },
+                  {
+                    key: 'title-inferred',
+                    title: 'Title-inferred matches',
+                    listings: partitioned.titleInferred,
+                  },
+                  {
+                    key: 'description-inferred',
+                    title: 'Description-inferred matches',
+                    listings: partitioned.descriptionInferred,
+                  },
+                ];
+              })();
             return locationSection.listings.length > 0 && (
               <section className="job-discovery-location-group" key={locationSection.key}>
                 {locationSection.title && <h3>{locationSection.title} <span>({locationSection.listings.length})</span></h3>}
-                {groups.map(([companyName, listings]) => (
-                  <section className="job-discovery-company-group" key={`${locationSection.key}:${companyName || 'all-listings'}`}>
-                    {companyName && <h4>{companyName} <span>({listings.length})</span></h4>}
-                    <ul className="job-discovery-list">{listings.map(renderListing)}</ul>
-                  </section>
-                ))}
+                {evidenceGroups.filter((group) => group.listings.length > 0).map((evidenceGroup) => {
+                  const companyGroups = groupByCompany
+                    ? Object.entries(groupListingsByCompany(evidenceGroup.listings))
+                    : [['', evidenceGroup.listings]];
+                  return (
+                    <section className="job-discovery-evidence-group" key={`${locationSection.key}:${evidenceGroup.key}`}>
+                      {evidenceGroup.title && (
+                        <h4>{evidenceGroup.title} <span>({evidenceGroup.listings.length})</span></h4>
+                      )}
+                      {companyGroups.map(([companyName, listings]) => (
+                        <section className="job-discovery-company-group" key={`${locationSection.key}:${evidenceGroup.key}:${companyName || 'all-listings'}`}>
+                          {companyName && <h5>{companyName} <span>({listings.length})</span></h5>}
+                          <ul className="job-discovery-list">{listings.map(renderListing)}</ul>
+                        </section>
+                      ))}
+                    </section>
+                  );
+                })}
               </section>
             );
           })}
+          {experienceFilterActive && experienceFilterResults.unknown.length > 0 && (
+            <details className="job-discovery-unconfirmed">
+              <summary>
+                Unconfirmed Experience Information ({experienceFilterResults.unconfirmedCount})
+              </summary>
+              <p>
+                Provider metadata, title, and description do not establish a clear level, or available signals conflict.
+                They are not confirmed matches for {experience} and are excluded from the confirmed match count.
+              </p>
+              {unconfirmedCompanyGroups.map(([companyName, listings]) => (
+                <section
+                  className="job-discovery-company-group"
+                  key={`unconfirmed:${companyName || 'all-listings'}`}
+                >
+                  {companyName && <h5>{companyName} <span>({listings.length})</span></h5>}
+                  <ul className="job-discovery-list">{listings.map(renderListing)}</ul>
+                </section>
+              ))}
+            </details>
+          )}
         </section>
       )}
 

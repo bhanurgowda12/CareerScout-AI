@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   createExternalJobSearchLinks,
   createJobPreparationRoadmap,
@@ -11,6 +12,7 @@ import {
   filterAndSortDiscoveryListings,
   filterDiscoveryListings,
   formatDiscoveryDate,
+  getExperienceClassificationDetails,
   getCategorySearchTerms,
   getExperienceClassification,
   getKnownEmploymentTypes,
@@ -24,7 +26,15 @@ import {
   JOB_SKILLS,
   matchesJobSelections,
   normalizeSearchText,
+  partitionExperienceClassifications,
+  partitionExperienceFilterResults,
+  summarizeCompanyListings,
 } from './jobDiscoveryUtils.js';
+
+const experienceClassificationCases = JSON.parse(readFileSync(
+  new URL('../../shared/experienceClassificationCases.json', import.meta.url),
+  'utf8',
+));
 
 const listing = {
   id: '123',
@@ -255,7 +265,6 @@ test('filters supported employment and experience terms without inventing missin
     { ...listing, id: 'unknown', url: 'https://remotive.com/jobs/unknown', title: 'Software Engineer' },
   ], { experience: 'Internships' }).map((job) => job.title), [
     'Software Engineering Intern',
-    'Software Engineer',
   ]);
   assert.deepEqual(filterAndSortDiscoveryListings([
     { ...listing, id: 'graduate', url: 'https://remotive.com/jobs/graduate', title: 'Graduate Software Engineer' },
@@ -265,24 +274,181 @@ test('filters supported employment and experience terms without inventing missin
     'Graduate Software Engineer',
     'Software Engineer',
   ]);
-  assert.equal(getExperienceClassification({ title: 'Software Engineer' }), 'Not stated');
-  for (const title of [
-    'AI Intern',
-    'Data Analyst Intern',
-    'Graduate Engineer Trainee',
+  assert.deepEqual(filterAndSortDiscoveryListings([
+    { ...listing, id: 'junior', url: 'https://remotive.com/jobs/junior', title: 'Junior Developer' },
+    { ...listing, id: 'graduate', url: 'https://remotive.com/jobs/graduate', title: 'Graduate Software Engineer' },
+    { ...listing, id: 'unknown', url: 'https://remotive.com/jobs/unknown', title: 'Software Engineer' },
+  ], { experience: 'Entry-level jobs' }).map((job) => job.title), [
     'Junior Developer',
-    'Associate Software Engineer',
-    'Apprentice',
-    'Entry-Level Engineer',
-  ]) {
-    assert.equal(getExperienceClassification({ title }), title.includes('Intern') ? 'Internship' : 'Entry-level');
-  }
+    'Software Engineer',
+  ]);
+  assert.deepEqual(filterAndSortDiscoveryListings([
+    { ...listing, id: 'senior', url: 'https://remotive.com/jobs/senior', title: 'Senior Engineer' },
+    { ...listing, id: 'junior', url: 'https://remotive.com/jobs/junior', title: 'Junior Developer' },
+    { ...listing, id: 'unknown', url: 'https://remotive.com/jobs/unknown', title: 'Software Engineer' },
+  ], { experience: 'Experienced jobs' }).map((job) => job.title), [
+    'Senior Engineer',
+    'Software Engineer',
+  ]);
+  assert.equal(getExperienceClassification({ title: 'Software Engineer' }), 'Unknown');
+  assert.equal(getExperienceClassification({ title: 'Trainee Developer' }), 'Unknown');
+  assert.equal(getExperienceClassification({ title: 'Associate Software Engineer' }), 'Unknown');
+  assert.equal(getExperienceClassification({ title: 'Graduate Engineer Trainee' }), 'Fresher/Graduate');
+  assert.equal(getExperienceClassification({ title: 'Junior Developer' }), 'Entry-level');
+  assert.equal(getExperienceClassification({ title: 'Senior Engineer' }), 'Experienced');
+  assert.equal(getExperienceClassification({ employmentType: 'Full-time', title: 'Software Engineer' }), 'Unknown');
   assert.deepEqual(filterAndSortDiscoveryListings([listing], {
     location: 'San Francisco',
   }), [listing]);
   assert.deepEqual(filterAndSortDiscoveryListings([listing], {
     workMode: 'On-site',
   }), []);
+});
+
+test('matches the shared backend experience-classification contract', () => {
+  for (const item of experienceClassificationCases) {
+    const result = getExperienceClassificationDetails(item.listing);
+    const classification = ({
+      'Fresher/Graduate': 'fresher/graduate',
+      'Entry-level': 'entry-level',
+    }[result.classification] || result.classification.toLocaleLowerCase());
+    assert.equal(classification, item.classification, item.name);
+    assert.equal(result.source, item.source, item.name);
+    if (item.opportunityType) {
+      assert.equal(result.opportunityType.classification, item.opportunityType, item.name);
+      assert.equal(result.opportunityType.source, item.opportunityTypeSource, item.name);
+      assert.equal(result.seniority.classification, item.seniority, item.name);
+      assert.equal(result.seniority.source, item.senioritySource, item.name);
+    }
+    assert.equal(getExperienceClassification(item.listing), ({
+      internship: 'Internship',
+      'fresher/graduate': 'Fresher/Graduate',
+      'entry-level': 'Entry-level',
+      experienced: 'Experienced',
+      unknown: 'Unknown',
+    }[item.classification]), item.name);
+  }
+});
+
+test('partitions experience-filter results into source-reported, inferred, and unknown groups', () => {
+  const listings = [
+    { ...listing, id: 'source', url: 'https://remotive.com/jobs/source', employmentType: '', experienceLevel: 'Internship' },
+    { ...listing, id: 'inferred', url: 'https://remotive.com/jobs/inferred', title: 'Junior Developer' },
+    { ...listing, id: 'unknown', url: 'https://remotive.com/jobs/unknown', title: 'Associate Developer' },
+  ];
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(partitionExperienceClassifications(listings))
+      .map(([group, items]) => [group, items.map((item) => item.id)])),
+    {
+      providerReported: ['source'],
+      titleInferred: ['inferred'],
+      descriptionInferred: [],
+      unknown: ['unknown'],
+    },
+  );
+  const summary = summarizeCompanyListings(listings);
+  assert.equal(summary.providerReportedExperience, 1);
+  assert.equal(summary.titleInferredExperience, 1);
+  assert.equal(summary.descriptionInferredExperience, 0);
+  assert.equal(summary.unknownExperience, 2);
+});
+
+test('experience filters prioritize confirmed Full Stack matches and keep unknown listings unconfirmed', () => {
+  const listings = [
+    { ...listing, id: 'provider-internship', url: 'https://remotive.com/jobs/provider-internship', employmentType: '', experienceLevel: 'Internship', title: 'Full Stack Developer' },
+    { ...listing, id: 'title-internship', url: 'https://remotive.com/jobs/title-internship', employmentType: '', title: 'Full Stack Developer Internship' },
+    { ...listing, id: 'provider-graduate', url: 'https://remotive.com/jobs/provider-graduate', experienceLevel: 'Graduate', title: 'Full Stack Developer' },
+    { ...listing, id: 'title-graduate', url: 'https://remotive.com/jobs/title-graduate', title: 'Graduate Full Stack Developer' },
+    { ...listing, id: 'provider-entry', url: 'https://remotive.com/jobs/provider-entry', experienceLevel: 'Entry Level', title: 'Full Stack Developer' },
+    { ...listing, id: 'title-entry', url: 'https://remotive.com/jobs/title-entry', title: 'Junior Full Stack Developer' },
+    { ...listing, id: 'unknown', url: 'https://remotive.com/jobs/unknown', employmentType: '', title: 'Full Stack Developer' },
+  ];
+  const cases = [
+    ['Internships', ['provider-internship', 'title-internship']],
+    ['Freshers & graduates', ['provider-graduate', 'title-graduate']],
+    ['Entry-level jobs', ['provider-entry', 'title-entry']],
+  ];
+
+  for (const [experience, expectedConfirmed] of cases) {
+    const filtered = filterAndSortDiscoveryListings(listings, {
+      role: 'Full Stack Developer',
+      experience,
+    });
+    const results = partitionExperienceFilterResults(filtered, experience);
+    assert.deepEqual(results.confirmed.map((job) => job.id).sort(), expectedConfirmed.sort(), experience);
+    assert.deepEqual(results.unknown.map((job) => job.id), experience === 'Internships'
+      ? ['unknown']
+      : ['provider-internship', 'title-internship', 'unknown'], experience);
+    assert.equal(results.confirmedCount, 2, experience);
+    assert.equal(results.unconfirmedCount, experience === 'Internships' ? 1 : 3, experience);
+  }
+});
+
+test('description-inferred experience remains distinct, confirmed, and filter-specific', () => {
+  const listings = [
+    {
+      ...listing,
+      id: 'description-internship',
+      url: 'https://remotive.com/jobs/description-internship',
+      title: 'Full Stack Developer',
+      employmentType: '',
+      description: 'This is a paid internship program on our product team.',
+    },
+    {
+      ...listing,
+      id: 'description-experienced',
+      url: 'https://remotive.com/jobs/description-experienced',
+      title: 'Full Stack Developer',
+      description: '3+ years of experience as a full-stack or frontend-heavy engineer.',
+    },
+    {
+      ...listing,
+      id: 'source-internship-entry',
+      url: 'https://remotive.com/jobs/source-internship-entry',
+      title: 'Full Stack Developer',
+      employmentType: 'Internship',
+      experienceLevel: 'Entry-Level, Junior',
+    },
+    {
+      ...listing,
+      id: 'unknown',
+      url: 'https://remotive.com/jobs/unknown-experience',
+      title: 'Full Stack Developer',
+      employmentType: '',
+      description: 'Students use our Python product.',
+    },
+  ];
+
+  const internshipResults = partitionExperienceFilterResults(
+    filterAndSortDiscoveryListings(listings, { role: 'Full Stack Developer', experience: 'Internships' }),
+    'Internships',
+  );
+  const entryLevelResults = partitionExperienceFilterResults(
+    filterAndSortDiscoveryListings(listings, { role: 'Full Stack Developer', experience: 'Entry-level jobs' }),
+    'Entry-level jobs',
+  );
+  const experiencedResults = partitionExperienceFilterResults(
+    filterAndSortDiscoveryListings(listings, { role: 'Full Stack Developer', experience: 'Experienced jobs' }),
+    'Experienced jobs',
+  );
+
+  assert.deepEqual(internshipResults.confirmed.map((job) => job.id).sort(), [
+    'description-internship',
+    'source-internship-entry',
+  ]);
+  assert.deepEqual(internshipResults.descriptionInferred.map((job) => job.id), ['description-internship']);
+  assert.deepEqual(entryLevelResults.confirmed.map((job) => job.id), ['source-internship-entry']);
+  assert.deepEqual(experiencedResults.confirmed.map((job) => job.id), ['description-experienced']);
+  for (const [results, expectedUnknown] of [
+    [internshipResults, ['unknown']],
+    [entryLevelResults, ['description-internship', 'unknown']],
+    [experiencedResults, ['description-internship', 'unknown']],
+  ]) {
+    assert.deepEqual(results.unknown.map((job) => job.id).sort(), expectedUnknown.sort());
+    assert.equal(results.confirmedCount, results.providerReported.length
+      + results.titleInferred.length + results.descriptionInferred.length);
+    assert.equal(results.unconfirmedCount, expectedUnknown.length);
+  }
 });
 
 test('keeps unknown work-mode and employment metadata visible without treating it as confirmed', () => {

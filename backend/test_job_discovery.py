@@ -1,6 +1,7 @@
 import json
 import os
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
@@ -588,6 +589,7 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
             main._normalize_remotive_job(self.listing(
                 id=1,
                 title="Software Intern",
+                job_type="",
                 url="https://remotive.com/jobs/software-intern-1",
             )),
             main._normalize_remotive_job(self.listing(
@@ -602,8 +604,13 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
             )),
             main._normalize_remotive_job(self.listing(
                 id=4,
+                title="Junior Software Engineer",
+                url="https://remotive.com/jobs/junior-engineer-4",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=5,
                 title="Software Engineer",
-                url="https://remotive.com/jobs/software-engineer-4",
+                url="https://remotive.com/jobs/software-engineer-5",
             )),
         ]
         with patch.object(main, "_get_remotive_jobs", return_value=(listings, "stamp", True)):
@@ -611,12 +618,292 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
                 internships = self.client.get("/api/job-discovery?experience=Internships").json()["jobs"]
                 freshers = self.client.get("/api/job-discovery?experience=Freshers%20%26%20graduates").json()["jobs"]
                 entry_level = self.client.get("/api/job-discovery?experience=Entry-level%20jobs").json()["jobs"]
+                experienced = self.client.get("/api/job-discovery?experience=Experienced%20jobs").json()["jobs"]
 
-        self.assertEqual([job["title"] for job in internships], ["Software Intern", "Software Engineer"])
-        self.assertEqual([job["title"] for job in freshers], ["Graduate Software Engineer", "Software Engineer"])
-        self.assertEqual([job["title"] for job in entry_level], ["Graduate Software Engineer", "Software Engineer"])
-        self.assertEqual(internships[1]["experienceClassification"], "not stated")
-        self.assertEqual(freshers[0]["experienceClassification"], "entry level")
+        self.assertEqual([job["title"] for job in internships], ["Software Intern"])
+        self.assertEqual(
+            [job["title"] for job in freshers],
+            ["Software Intern", "Graduate Software Engineer", "Software Engineer"],
+        )
+        self.assertEqual(
+            [job["title"] for job in entry_level],
+            ["Software Intern", "Junior Software Engineer", "Software Engineer"],
+        )
+        self.assertEqual(
+            [job["title"] for job in experienced],
+            ["Software Intern", "Senior Software Engineer", "Software Engineer"],
+        )
+        self.assertEqual(internships[0]["experienceClassification"], "internship")
+        self.assertEqual(internships[0]["experienceClassificationSource"], "title")
+        self.assertEqual(len(internships), 1)
+        internship_with_unknown_seniority = freshers[0]
+        self.assertEqual(internship_with_unknown_seniority["experienceOpportunityType"], "internship")
+        self.assertEqual(internship_with_unknown_seniority["experienceSeniority"], "unknown")
+        graduate = next(job for job in freshers if job["title"] == "Graduate Software Engineer")
+        junior = next(job for job in entry_level if job["title"] == "Junior Software Engineer")
+        senior = next(job for job in experienced if job["title"] == "Senior Software Engineer")
+        unknown = next(job for job in experienced if job["title"] == "Software Engineer")
+        self.assertEqual(graduate["experienceSeniority"], "fresher/graduate")
+        self.assertEqual(junior["experienceSeniority"], "entry-level")
+        self.assertEqual(senior["experienceSeniority"], "experienced")
+        self.assertEqual(unknown["experienceSeniority"], "unknown")
+
+    def test_role_and_experience_filters_return_distinct_confirmed_matches_and_unconfirmed_listings(self):
+        listings = [
+            main._normalize_remotive_job(self.listing(
+                id=31,
+                title="Full Stack Developer",
+                job_type="",
+                experience_level="Internship",
+                url="https://remotive.com/jobs/full-stack-internship-31",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=32,
+                title="Full Stack Developer Internship",
+                job_type="",
+                url="https://remotive.com/jobs/full-stack-internship-32",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=33,
+                title="Full Stack Developer",
+                experience_level="Graduate",
+                url="https://remotive.com/jobs/full-stack-graduate-33",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=34,
+                title="Graduate Full Stack Developer",
+                url="https://remotive.com/jobs/full-stack-graduate-34",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=35,
+                title="Full Stack Developer",
+                experience_level="Entry Level",
+                url="https://remotive.com/jobs/full-stack-entry-35",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=36,
+                title="Junior Full Stack Developer",
+                url="https://remotive.com/jobs/full-stack-entry-36",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=37,
+                title="Full Stack Developer",
+                job_type="",
+                url="https://remotive.com/jobs/full-stack-unknown-37",
+            )),
+        ]
+        expected_classifications = {
+            "31": ("internship", "provider"),
+            "32": ("internship", "title"),
+            "33": ("fresher/graduate", "provider"),
+            "34": ("fresher/graduate", "title"),
+            "35": ("entry-level", "provider"),
+            "36": ("entry-level", "title"),
+            "37": ("unknown", "unknown"),
+        }
+        experience_cases = {
+            "Internships": {"31", "32"},
+            "Freshers & graduates": {"33", "34"},
+            "Entry-level jobs": {"35", "36"},
+        }
+        confirmed_results = {}
+        with patch.object(main, "_get_remotive_jobs", return_value=(listings, "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                for experience, expected_ids in experience_cases.items():
+                    response = self.client.post("/api/job-discovery", json={
+                        "roleTerms": ["Full Stack Developer"],
+                        "experience": experience,
+                        "limit": 500,
+                    })
+                    self.assertEqual(response.status_code, 200)
+                    dimension = (
+                        ("experienceOpportunityType", "experienceOpportunityTypeSource")
+                        if experience == "Internships"
+                        else ("experienceSeniority", "experienceSenioritySource")
+                    )
+                    actual_classifications = {
+                        job["id"]: (job[dimension[0]], job[dimension[1]])
+                        for job in response.json()["jobs"]
+                    }
+                    expected_ids_for_dimension = (
+                        {
+                            "31": ("internship", "provider"),
+                            "32": ("internship", "title"),
+                            "37": ("unknown", "unknown"),
+                        }
+                        if experience == "Internships"
+                        else {
+                            "31": ("unknown", "unknown"),
+                            "32": ("unknown", "unknown"),
+                            "37": ("unknown", "unknown"),
+                            **{
+                                listing_id: classification
+                                for listing_id, classification in expected_classifications.items()
+                                if listing_id in expected_ids
+                            },
+                        }
+                    )
+                    self.assertEqual(actual_classifications, expected_ids_for_dimension, experience)
+                    confirmed_results[experience] = {
+                        listing_id
+                        for listing_id, (classification, _source) in actual_classifications.items()
+                        if classification != "unknown"
+                    }
+
+        self.assertEqual(len({frozenset(ids) for ids in confirmed_results.values()}), len(experience_cases))
+
+    def test_backend_experience_classifier_matches_shared_cross_language_cases(self):
+        cases = json.loads(
+            (Path(__file__).resolve().parents[1] / "shared" / "experienceClassificationCases.json")
+            .read_text(encoding="utf-8")
+        )
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                result = main._classify_experience_level(case["listing"])
+                self.assertEqual(result["classification"], case["classification"])
+                self.assertEqual(result["source"], case["source"])
+                for case_key, result_key in (
+                    ("opportunityType", "opportunityType"),
+                    ("opportunityTypeSource", "opportunityTypeSource"),
+                    ("seniority", "seniority"),
+                    ("senioritySource", "senioritySource"),
+                ):
+                    if case_key in case:
+                        self.assertEqual(result[result_key], case[case_key])
+
+    def test_description_inferred_levels_are_filtered_and_returned_with_evidence(self):
+        listings = [
+            main._normalize_remotive_job(self.listing(
+                id=51,
+                title="Full-Stack Developer",
+                description="<p>3+ years of experience as a full-stack or frontend-heavy engineer.</p>",
+                url="https://remotive.com/jobs/full-stack-experienced-51",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=52,
+                title="Full-Stack Developer",
+                description="<p>No prior experience required.</p>",
+                url="https://remotive.com/jobs/full-stack-entry-52",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=53,
+                title="Full-Stack Developer",
+                description="<p>Students use this product. Build with Python.</p>",
+                url="https://remotive.com/jobs/full-stack-unknown-53",
+            )),
+        ]
+        with patch.object(main, "_get_remotive_jobs", return_value=(listings, "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                experienced = self.client.post("/api/job-discovery", json={
+                    "roleTerms": ["Full Stack Developer"],
+                    "experience": "Experienced jobs",
+                    "limit": 50,
+                }).json()["jobs"]
+                entry_level = self.client.post("/api/job-discovery", json={
+                    "roleTerms": ["Full Stack Developer"],
+                    "experience": "Entry-level jobs",
+                    "limit": 50,
+                }).json()["jobs"]
+
+        self.assertEqual(
+            [(job["id"], job["experienceSeniority"], job["experienceSenioritySource"]) for job in experienced],
+            [("51", "experienced", "description"), ("53", "unknown", "unknown")],
+        )
+        self.assertEqual(
+            [(job["id"], job["experienceSeniority"], job["experienceSenioritySource"]) for job in entry_level],
+            [("52", "entry-level", "description"), ("53", "unknown", "unknown")],
+        )
+        self.assertIn("3+ years of experience", experienced[0]["experienceSeniorityEvidence"])
+        self.assertEqual(entry_level[0]["experienceClassificationSource"], "description")
+        self.assertEqual(
+            experienced[0]["experienceSeniorityEvidence"],
+            "3+ years of experience as a full-stack or frontend-heavy engineer",
+        )
+
+    def test_provider_normalizers_preserve_available_experience_metadata(self):
+        remotive = main._normalize_remotive_job(self.listing(
+            experience_level="Graduate",
+            job_type="Full-time",
+        ))
+        self.assertEqual(remotive["experienceLevel"], "Graduate")
+        self.assertEqual(
+            remotive["experienceMetadata"],
+            [{"label": "Experience level", "value": "Graduate"}],
+        )
+        self.assertEqual(main._classify_experience_level(remotive)["classification"], "fresher/graduate")
+
+        jobicy = main._normalize_jobicy_job(self.jobicy_listing(jobLevel="Junior"))
+        self.assertEqual(jobicy["experienceLevel"], "Junior")
+        self.assertEqual(
+            jobicy["experienceMetadata"],
+            [{"label": "Job level", "value": "Junior"}],
+        )
+        self.assertEqual(main._classify_experience_level(jobicy)["classification"], "entry-level")
+
+        for job_level, expected, source in (
+            ("Any", "unknown", "unknown"),
+            ("Director", "experienced", "provider"),
+            ("Midweight", "unknown", "unknown"),
+        ):
+            with self.subTest(job_level=job_level):
+                normalized = main._normalize_jobicy_job(self.jobicy_listing(
+                    jobTitle="Software Engineer",
+                    jobType=[],
+                    jobLevel=job_level,
+                ))
+                self.assertEqual(normalized["experienceLevel"], job_level)
+                self.assertEqual(normalized["experienceMetadata"], [
+                    {"label": "Job level", "value": job_level},
+                ])
+                result = main._classify_experience_level(normalized)
+                self.assertEqual(result["seniority"], expected)
+                self.assertEqual(result["senioritySource"], source)
+
+        company = {"company": "Example Co"}
+        greenhouse = main._normalize_company_board_job("greenhouse", {
+            "id": 11,
+            "title": "Software Engineer",
+            "absolute_url": "https://boards.greenhouse.io/example/jobs/11",
+            "metadata": [
+                {"name": "Experience Level", "value": "Entry Level"},
+                {"name": "Seniority", "value": "Entry Level"},
+                {"name": "Team", "value": "Platform"},
+            ],
+        }, company)
+        lever = main._normalize_company_board_job("lever", {
+            "id": "12",
+            "text": "Senior Engineer",
+            "hostedUrl": "https://jobs.lever.co/example/12",
+            "categories": {"seniority": "Senior", "commitment": "Full-time"},
+        }, company)
+        ashby = main._normalize_company_board_job("ashby", {
+            "id": "13",
+            "title": "Principal Engineer",
+            "jobUrl": "https://jobs.ashbyhq.com/example/13",
+            "experienceLevel": "Principal",
+        }, company)
+        self.assertEqual(greenhouse["experienceLevel"], "Entry Level")
+        self.assertEqual(
+            greenhouse["experienceMetadata"],
+            [
+                {"label": "Experience Level", "value": "Entry Level"},
+                {"label": "Seniority", "value": "Entry Level"},
+            ],
+        )
+        self.assertEqual(main._classify_experience_level(greenhouse)["classification"], "entry-level")
+        self.assertEqual(lever["experienceLevel"], "Senior")
+        self.assertEqual(main._classify_experience_level(lever)["classification"], "experienced")
+        self.assertEqual(ashby["experienceLevel"], "Principal")
+        self.assertEqual(main._classify_experience_level(ashby)["classification"], "experienced")
+
+        full_time_only = main._normalize_company_board_job("lever", {
+            "id": "14",
+            "text": "Software Engineer",
+            "hostedUrl": "https://jobs.lever.co/example/14",
+            "categories": {"commitment": "Full-time"},
+        }, company)
+        self.assertEqual(full_time_only["experienceMetadata"], [])
+        self.assertEqual(main._classify_experience_level(full_time_only)["classification"], "unknown")
 
     def test_work_mode_and_employment_filters_keep_unknown_metadata_distinct_from_confirmed_matches(self):
         unknown = main._normalize_remotive_job(self.listing(

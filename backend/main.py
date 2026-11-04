@@ -131,6 +131,68 @@ def _plain_job_description(value):
     return re.sub(r"\n{3,}", "\n\n", "".join(parser.parts)).strip()[:20000]
 
 
+_EXPERIENCE_METADATA_FIELDS = (
+    ("Experience level", "experienceLevel"),
+    ("Experience level", "experience_level"),
+    ("Job level", "jobLevel"),
+    ("Job level", "job_level"),
+    ("Seniority", "seniority"),
+    ("Seniority", "seniorityLevel"),
+    ("Seniority", "seniority_level"),
+    ("Career level", "careerLevel"),
+    ("Career level", "career_level"),
+    ("Level", "level"),
+    ("Experience", "experience"),
+)
+
+
+def _normalize_experience_metadata(item, extra_fields=(), custom_metadata=False):
+    entries = []
+    seen = set()
+
+    def add(label, value):
+        if not isinstance(value, str) or not value.strip():
+            return
+        normalized = (label.casefold(), value.strip().casefold())
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        entries.append({"label": label[:100], "value": value.strip()[:500]})
+
+    for label, key in (*_EXPERIENCE_METADATA_FIELDS, *extra_fields):
+        value = item
+        for part in key.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        add(label, value)
+
+    if custom_metadata and isinstance(item.get("metadata"), list):
+        for field in item["metadata"]:
+            if not isinstance(field, dict):
+                continue
+            label = field.get("name")
+            value = field.get("value")
+            normalized_label = _normalize_company_name(label)
+            if isinstance(label, str) and (
+                re.search(r"\b(experience|seniority|career level|job level)\b", normalized_label)
+                or normalized_label == "level"
+            ):
+                add(label, value)
+
+    return entries[:20]
+
+
+def _experience_level_text(metadata):
+    values = []
+    seen = set()
+    for entry in metadata:
+        value = entry["value"]
+        normalized = value.casefold()
+        if normalized not in seen:
+            values.append(value)
+            seen.add(normalized)
+    return " / ".join(values)[:500]
+
+
 def _normalize_remotive_job(item):
     if not isinstance(item, dict):
         return None
@@ -154,6 +216,7 @@ def _normalize_remotive_job(item):
         return value.strip()[:max_length] if isinstance(value, str) else ""
 
     tags = item.get("tags")
+    experience_metadata = _normalize_experience_metadata(item)
     return {
         "id": str(item.get("id", ""))[:100],
         "title": title.strip()[:200],
@@ -164,7 +227,8 @@ def _normalize_remotive_job(item):
         "url": url.strip()[:2048],
         "category": optional_text("category"),
         "employmentType": optional_text("job_type", 100),
-        "experienceLevel": "",
+        "experienceLevel": _experience_level_text(experience_metadata),
+        "experienceMetadata": experience_metadata,
         "workMode": "Remote",
         "salary": optional_text("salary", 200),
         "skills": [
@@ -298,6 +362,7 @@ def _normalize_jobicy_job(item):
         salary = " ".join(part for part in (currency, amount, period) if part)[:200]
 
     job_level = item.get("jobLevel")
+    experience_metadata = _normalize_experience_metadata(item)
     location = item.get("jobGeo")
     description = item.get("jobDescription") or item.get("jobExcerpt")
     provider_id = str(item.get("id", "")).strip()
@@ -310,7 +375,9 @@ def _normalize_jobicy_job(item):
             value.strip()[:100] for value in job_types[:10]
             if isinstance(value, str) and value.strip()
         ) if isinstance(job_types, list) else "",
-        "experienceLevel": job_level.strip()[:100] if isinstance(job_level, str) else "",
+        "experienceLevel": _experience_level_text(experience_metadata)
+        or (job_level.strip()[:500] if isinstance(job_level, str) else ""),
+        "experienceMetadata": experience_metadata,
         "workMode": "Remote",
         "salary": salary,
         "skills": [],
@@ -530,6 +597,7 @@ def _normalize_company_board_job(provider, item, company):
             if isinstance(value, dict) and isinstance(value.get("name"), str) and value.get("name").strip()
         ) if isinstance(department, list) else ""
         job_id = item.get("id")
+        experience_metadata = _normalize_experience_metadata(item, custom_metadata=True)
         employment = ""
         work_mode = ""
         salary = ""
@@ -542,6 +610,19 @@ def _normalize_company_board_job(provider, item, company):
         published = item.get("createdAt")
         category = categories.get("team", "") if isinstance(categories.get("team"), str) else ""
         job_id = item.get("id")
+        experience_metadata = _normalize_experience_metadata(
+            item,
+            extra_fields=(
+                ("Experience level", "categories.experienceLevel"),
+                ("Job level", "categories.jobLevel"),
+                ("Seniority", "categories.seniority"),
+                ("Seniority", "categories.seniorityLevel"),
+                ("Seniority", "categories.seniority_level"),
+                ("Level", "categories.level"),
+                ("Experience level", "categories.experience_level"),
+                ("Job level", "categories.job_level"),
+            ),
+        )
         employment = categories.get("commitment", "") if isinstance(categories.get("commitment"), str) else ""
         work_mode = item.get("workplaceType", "") if isinstance(item.get("workplaceType"), str) else ""
         salary = ""
@@ -553,6 +634,7 @@ def _normalize_company_board_job(provider, item, company):
         published = item.get("publishedAt")
         category = item.get("department", "") if isinstance(item.get("department"), str) else ""
         job_id = item.get("id")
+        experience_metadata = _normalize_experience_metadata(item)
         employment = item.get("employmentType", "") if isinstance(item.get("employmentType"), str) else ""
         work_mode = item.get("workplaceType", "") if isinstance(item.get("workplaceType"), str) else ""
         compensation = item.get("compensation") if isinstance(item.get("compensation"), dict) else {}
@@ -589,7 +671,8 @@ def _normalize_company_board_job(provider, item, company):
         "company": company["company"],
         "location": safe_text(location, 300),
         "employmentType": safe_text(employment, 100),
-        "experienceLevel": "",
+        "experienceLevel": _experience_level_text(experience_metadata),
+        "experienceMetadata": experience_metadata,
         "workMode": work_mode,
         "salary": safe_text(salary, 200),
         "skills": [],
@@ -827,38 +910,285 @@ def _canonical_employment_type(value):
     return aliases.get(requested, "")
 
 
-def _known_experience_level(listing):
-    explicit = _normalize_company_name(listing.get("experienceLevel", ""))
-    title = _normalize_company_name(listing.get("title", ""))
-    employment = _normalize_company_name(listing.get("employmentType", ""))
-    if re.search(r"\b(intern|internship)\b", f"{explicit} {employment} {title}"):
-        return "internship"
-    if explicit in {"fresher", "graduate", "new graduate", "entry level", "junior", "apprentice"}:
-        return "entry level"
-    if explicit in {"experienced", "senior", "mid level", "mid senior", "professional"}:
-        return "experienced"
-    if re.search(
-        r"\b(fresher|graduate|new grad|graduate trainee|junior|associate|entry level|apprentice)\b",
-        title,
+_EXPERIENCE_CLASS_PATTERNS = (
+    ("fresher/graduate", re.compile(r"\b(?:freshers?|graduates?|new grad(?:uate)?)\b")),
+    ("entry-level", re.compile(r"\b(?:junior|entry level|apprentice|apprenticeship)\b")),
+    ("experienced", re.compile(r"\b(?:senior|principal|staff|lead|director|experienced|mid level|mid senior)\b")),
+)
+_EXPERIENCE_TITLE_PATTERNS = (
+    ("fresher/graduate", re.compile(r"\b(?:freshers?|graduates?|new grad(?:uate)?)\b")),
+    ("entry-level", re.compile(r"\b(?:junior|entry level)\b")),
+    ("experienced", re.compile(r"\b(?:senior|principal|experienced)\b")),
+)
+_DESCRIPTION_INTERNSHIP_PATTERN = re.compile(
+    r"\b(?:internship\s+(?:position|role|opportunity|program)|summer\s+internship|"
+    r"(?:as|working\s+as)\s+an?\s+intern|intern\s+(?:position|role|opportunity)|"
+    r"(?:this|the|advertised)\s+(?:position|role|opportunity)\s+(?:is|will\s+be)\s+"
+    r"(?:an?\s+)?(?:paid\s+)?internship|this\s+is\s+(?:an?\s+)?(?:paid\s+)?internship)\b",
+    re.IGNORECASE,
+)
+_DESCRIPTION_FRESHER_PATTERN = re.compile(
+    r"\b(?:open\s+to|welcome(?:d)?\s+to\s+apply|encouraged\s+to\s+apply|designed\s+for|"
+    r"seeking|looking\s+for|ideal\s+for|intended\s+for|accept(?:ing)?\s+applications\s+from)"
+    r"\s+(?:recent\s+|new\s+)?(?:college\s+)?(?:graduates?|grads?|freshers?)\b|"
+    r"\b(?:recent|new)\s+(?:college\s+)?(?:graduates?|grads?|freshers?)\s+"
+    r"(?:are\s+)?(?:welcome|encouraged|eligible|invited)\b",
+    re.IGNORECASE,
+)
+_DESCRIPTION_NO_EXPERIENCE_PATTERN = re.compile(
+    r"(?:^|[\r\n]|[.!?;:,]\s*|[-*]\s*)"
+    r"(?:no\s+(?:(?:prior|previous|professional)\s+)?experience\s+(?:is\s+)?"
+    r"(?:required|needed|necessary)|(?:(?:prior|previous|professional)\s+)?"
+    r"experience\s+(?:is\s+)?not\s+required)\b",
+    re.IGNORECASE,
+)
+_DESCRIPTION_ENTRY_LEVEL_PATTERN = re.compile(
+    r"\bentry[- ]level\s+(?:position|role|opportunity)\b",
+    re.IGNORECASE,
+)
+_DESCRIPTION_NEGATED_INTERNSHIP_PATTERN = re.compile(
+    r"\b(?:not|isn't|is\s+not|is\s+never)\s+(?:an?\s+)?(?:paid\s+)?internship"
+    r"(?:\s+(?:position|role|opportunity|program))?\b",
+    re.IGNORECASE,
+)
+_DESCRIPTION_ROLE_EXPERIENCE_PATTERN = re.compile(
+    r"\b(?P<years>\d+(?:\.\d+)?\+?|one|two|three|four|five|six|seven|eight|nine|ten)"
+    r"\s+years?\s+(?:of\s+)?experience\s+(?:"
+    r"(?:as|working\s+as)\s+(?:an?\s+)?[^.;\n]{1,100}\b"
+    r"(?:engineer|developer|analyst|scientist|architect|designer|administrator|technician|"
+    r"specialist|consultant|manager|professional|role|position)\b|"
+    r"in\s+(?:similar|related)\s+roles?\b|"
+    r"in\s+(?:an?\s+)?[^.;\n]{1,80}\b(?:role|position)\b|"
+    r"providing\s+[^.;\n]{1,100}\b"
+    r"(?:services?|support|operations|engineering|development|management)\b)",
+    re.IGNORECASE,
+)
+_NUMBER_WORDS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+
+
+def _experience_signals(value, *, title=False):
+    normalized = _normalize_company_name(value)
+    if not normalized:
+        return set()
+    patterns = _EXPERIENCE_TITLE_PATTERNS if title else _EXPERIENCE_CLASS_PATTERNS
+    return {
+        classification
+        for classification, pattern in patterns
+        if pattern.search(normalized)
+    }
+
+
+def _description_seniority_signal(description):
+    matches = []
+    for classification, pattern in (
+        ("entry-level", _DESCRIPTION_NO_EXPERIENCE_PATTERN),
+        ("entry-level", _DESCRIPTION_ENTRY_LEVEL_PATTERN),
+        ("fresher/graduate", _DESCRIPTION_FRESHER_PATTERN),
     ):
-        return "entry level"
-    if re.search(r"\b(senior|principal|staff engineer|lead engineer|manager|experienced)\b", title):
-        return "experienced"
-    return ""
+        matches.extend((classification, match) for match in pattern.finditer(description))
+
+    for match in _DESCRIPTION_ROLE_EXPERIENCE_PATTERN.finditer(description):
+        years = match.group("years").casefold().rstrip("+")
+        try:
+            years_value = float(years) if years not in _NUMBER_WORDS else _NUMBER_WORDS[years]
+        except ValueError:
+            years_value = 0
+        if years_value >= 2:
+            matches.append(("experienced", match))
+
+    classifications = {classification for classification, _match in matches}
+    if not classifications:
+        return "", None
+    if len(classifications) > 1:
+        evidence = "; ".join(match.group(0).strip() for _classification, match in matches[:2])
+        return "unknown", evidence
+    classification = next(iter(classifications))
+    return classification, next(
+        match.group(0).strip()
+        for level, match in matches
+        if level == classification
+    )
+
+
+def _dimension_result(classification="", source="", evidence=""):
+    return {
+        "classification": classification or "unknown",
+        "source": source or "unknown",
+        "evidence": evidence,
+    }
+
+
+def _resolve_experience_dimension(provider_signals, title_signals, description_signal, provider_evidence, title, unknown_evidence):
+    if description_signal and description_signal["classification"] == "unknown":
+        return _dimension_result(evidence=f"Description contains conflicting seniority evidence: {description_signal['evidence']}")
+    if len(provider_signals) > 1:
+        return _dimension_result(evidence="Provider metadata indicates conflicting values.")
+    if provider_signals:
+        classification = next(iter(provider_signals))
+        if (title_signals and title_signals != {classification}) or (
+            description_signal and description_signal["classification"] != classification
+        ):
+            return _dimension_result(evidence="Provider metadata, title, or description indicate conflicting values.")
+        return _dimension_result(classification, "provider", "; ".join(provider_evidence))
+    if len(title_signals) > 1:
+        return _dimension_result(evidence="The title contains conflicting experience-level terms.")
+    if title_signals:
+        classification = next(iter(title_signals))
+        if description_signal and description_signal["classification"] != classification:
+            return _dimension_result(evidence="The title and description indicate conflicting experience levels.")
+        return _dimension_result(classification, "title", title.strip())
+    if description_signal:
+        return _dimension_result(
+            description_signal["classification"],
+            "description",
+            description_signal["evidence"],
+        )
+    return _dimension_result(evidence=unknown_evidence)
+
+
+def _classify_experience_level(listing):
+    provider_values = []
+    experience_level = listing.get("experienceLevel")
+    if isinstance(experience_level, str) and experience_level.strip():
+        provider_values.append(experience_level)
+    metadata = listing.get("experienceMetadata")
+    if isinstance(metadata, list):
+        provider_values.extend(
+            entry["value"]
+            for entry in metadata
+            if isinstance(entry, dict)
+            and isinstance(entry.get("value"), str)
+            and entry["value"].strip()
+        )
+    unique_provider_values = []
+    seen_provider_values = set()
+    for value in provider_values:
+        normalized_value = value.casefold()
+        if normalized_value not in seen_provider_values:
+            unique_provider_values.append(value)
+            seen_provider_values.add(normalized_value)
+    provider_values = unique_provider_values
+
+    provider_seniority_signals = set()
+    provider_seniority_evidence = []
+    provider_opportunity_signals = set()
+    provider_opportunity_evidence = []
+    for value in provider_values:
+        normalized_value = _normalize_company_name(value)
+        if re.search(r"\b(?:intern|internship)\b", normalized_value):
+            provider_opportunity_signals.add("internship")
+            provider_opportunity_evidence.append(value.strip())
+        signals = _experience_signals(value)
+        provider_seniority_signals.update(signals)
+        if signals:
+            provider_seniority_evidence.append(value.strip())
+
+    employment = listing.get("employmentType")
+    known_employment_types = _known_employment_types(listing)
+    if "Internship" in known_employment_types:
+        provider_opportunity_signals.add("internship")
+        provider_opportunity_evidence.append(f"employment type: {employment.strip()}")
+    if any(value != "Internship" for value in known_employment_types):
+        provider_opportunity_signals.add("non-internship")
+        provider_opportunity_evidence.append(f"employment type: {employment.strip()}")
+
+    title = listing.get("title", "")
+    title = title if isinstance(title, str) else ""
+    title_seniority_signals = _experience_signals(title, title=True)
+    title_opportunity_signals = {"internship"} if re.search(
+        r"\b(?:intern|internship)\b",
+        _normalize_company_name(title),
+    ) else set()
+    description = listing.get("description", "")
+    description = description if isinstance(description, str) else ""
+    description_seniority, description_seniority_evidence = _description_seniority_signal(description)
+    description_opportunity_match = _DESCRIPTION_INTERNSHIP_PATTERN.search(description)
+    description_internship_negation = _DESCRIPTION_NEGATED_INTERNSHIP_PATTERN.search(description)
+    description_opportunity_signal = {
+        "classification": "unknown" if description_internship_negation else "internship",
+        "evidence": "; ".join(
+            match.group(0).strip()
+            for match in (description_opportunity_match, description_internship_negation)
+            if match
+        ),
+    } if description_opportunity_match else None
+    description_seniority_signal = {
+        "classification": description_seniority,
+        "evidence": description_seniority_evidence,
+    } if description_seniority and description_seniority_evidence else None
+
+    seniority = _resolve_experience_dimension(
+        provider_seniority_signals,
+        title_seniority_signals,
+        description_seniority_signal,
+        provider_seniority_evidence,
+        title,
+        "The source did not state a seniority level, and the title or description has no clear eligibility signal.",
+    )
+    opportunity_type = _resolve_experience_dimension(
+        provider_opportunity_signals,
+        title_opportunity_signals,
+        description_opportunity_signal,
+        provider_opportunity_evidence,
+        title,
+        "The source did not state an opportunity type, and the title or description does not clearly identify an internship.",
+    )
+
+    if opportunity_type["classification"] == "internship":
+        primary = opportunity_type
+    elif seniority["classification"] != "unknown":
+        primary = seniority
+    else:
+        primary = _dimension_result(evidence="Experience and opportunity type are not stated clearly by the source.")
+    return {
+        "classification": primary["classification"],
+        "source": primary["source"],
+        "evidence": primary["evidence"],
+        "opportunityType": opportunity_type["classification"],
+        "opportunityTypeSource": opportunity_type["source"],
+        "opportunityTypeEvidence": opportunity_type["evidence"],
+        "seniority": seniority["classification"],
+        "senioritySource": seniority["source"],
+        "seniorityEvidence": seniority["evidence"],
+    }
+
+
+def _known_experience_level(listing):
+    return _classify_experience_level(listing)["classification"]
 
 
 def _matches_experience_filter(listing, experience):
     selected = _normalize_company_name(experience)
-    known = _known_experience_level(listing)
     if not selected or selected in {"any experience", "all opportunities"}:
         return True
+    details = _classify_experience_level(listing)
     if selected in {"internship", "internships"}:
-        return known in {"internship", ""}
-    if selected in {"fresher", "freshers graduates", "graduate", "graduates", "entry level", "entry level jobs"}:
-        return known in {"entry level", ""}
+        return details["opportunityType"] in {"internship", "unknown"}
+    if selected in {
+        "fresher",
+        "freshers graduates",
+        "fresher graduate",
+        "freshers graduate",
+        "graduate",
+        "graduates",
+    }:
+        return details["seniority"] in {"fresher/graduate", "unknown"}
+    if selected in {"entry level", "entry level jobs"}:
+        return details["seniority"] in {"entry-level", "unknown"}
     if selected in {"experienced", "experienced jobs"}:
-        return known in {"experienced", ""}
-    return known in {"", selected}
+        return details["seniority"] in {"experienced", "unknown"}
+    return details["seniority"] in {"unknown", selected}
 
 
 def _classify_location_match(listing, requested_location):
@@ -1573,10 +1903,17 @@ def get_job_discovery(
     if location and location.strip():
         for job in filtered_jobs:
             job["locationMatch"] = _classify_location_match(job, location)
-            job["experienceClassification"] = _known_experience_level(job) or "not stated"
-    else:
-        for job in filtered_jobs:
-            job["experienceClassification"] = _known_experience_level(job) or "not stated"
+    for job in filtered_jobs:
+        classification = _classify_experience_level(job)
+        job["experienceClassification"] = classification["classification"]
+        job["experienceClassificationSource"] = classification["source"]
+        job["experienceClassificationEvidence"] = classification["evidence"]
+        job["experienceOpportunityType"] = classification["opportunityType"]
+        job["experienceOpportunityTypeSource"] = classification["opportunityTypeSource"]
+        job["experienceOpportunityTypeEvidence"] = classification["opportunityTypeEvidence"]
+        job["experienceSeniority"] = classification["seniority"]
+        job["experienceSenioritySource"] = classification["senioritySource"]
+        job["experienceSeniorityEvidence"] = classification["seniorityEvidence"]
     returned_jobs = filtered_jobs[:limit]
     grouped_provider_status = {}
     for status in provider_status:
