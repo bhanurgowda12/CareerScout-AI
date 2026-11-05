@@ -5,6 +5,7 @@ import {
   createExternalJobSearchLinks,
   createExternalCompanySearchLink,
   createJobPreparationRoadmap,
+  compareListingWithProfile,
   createTrackerPrefill,
   filterAndSortDiscoveryListings,
   formatDiscoveryDate,
@@ -363,7 +364,7 @@ export function JobDiscovery({
         ? 'source-reported'
         : experienceDetails.seniority.source === 'title' ? 'title-inferred' : 'description-inferred'})`;
     const comparison = profileState === 'ready' && comparisonJob === (job.id || job.url)
-      ? createJobPreparationRoadmap(job, profile || {}, roadmapWeeks).requirements
+      ? compareListingWithProfile(job, profile || {})
       : null;
     const roadmap = profileState === 'ready' && roadmapJob === (job.id || job.url)
       ? createJobPreparationRoadmap(job, profile || {}, roadmapWeeks)
@@ -409,32 +410,46 @@ export function JobDiscovery({
               Save job in tracker
             </button>
             <button className="small-action" type="button" onClick={() => analyzeListing(job)}>Open AI job analyzer</button>
-            <button className="small-action" type="button" disabled={profileState !== 'ready'} onClick={() => setComparisonJob(comparisonJob === jobKey ? '' : jobKey)}>Compare with profile</button>
+            <button className="small-action" type="button" disabled={profileState !== 'ready'} aria-expanded={comparisonJob === jobKey} aria-controls={`job-discovery-compare-${encodeURIComponent(String(jobKey))}`} onClick={() => setComparisonJob(comparisonJob === jobKey ? '' : jobKey)}>Compare with profile</button>
             <button className="small-action" type="button" disabled={profileState !== 'ready'} onClick={() => setRoadmapJob(roadmapJob === jobKey ? '' : jobKey)}>Prepare for this job</button>
           </footer>
-          {comparison && (
-            <section className="job-discovery-compare" aria-label={`Profile comparison for ${job.title}`}>
-              <h4>Profile evidence comparison</h4>
-              {comparison.score === null
-                ? <p>No structured skill requirements were available to calculate a score.</p>
-                : <p><strong>{comparison.score}%</strong> {comparison.scoreLabel}. This is not a prediction of hiring success.</p>}
-              <div>
-                <h5>Matched in your profile</h5>
-                {comparison.matchedSkills.length
-                  ? <ul>{comparison.matchedSkills.map((skill) => <li key={skill}>{skill}</li>)}</ul>
-                  : <p>No matching skills were documented in the saved profile.</p>}
-              </div>
-              <div>
-                <h5>Skills not documented in your profile</h5>
-                {comparison.needsVerification.length
-                  ? <ul>{comparison.needsVerification.map((skill) => <li key={skill}>{skill}</li>)}</ul>
-                  : <p>No identified requirements were missing from the saved profile.</p>}
-                <p>These are profile gaps, not confirmed skill gaps.</p>
-              </div>
-              <div>
-                <h5>Needs verification</h5>
-                <p>Self-assess the skills not listed above and verify the complete requirements with the original employer posting. Descriptions may mention skills that are not mandatory.</p>
-              </div>
+          {profileState === 'ready' && (
+            <section
+              id={`job-discovery-compare-${encodeURIComponent(String(jobKey))}`}
+              className="job-discovery-compare"
+              aria-label={`Profile comparison for ${job.title}`}
+              hidden={comparisonJob !== jobKey}
+            >
+              {comparison && (
+                <>
+                  <h4>Profile evidence comparison</h4>
+                  <p><strong>Match score:</strong> {comparison.score === null ? 'Unavailable' : `${comparison.score}%`} — {comparison.scoreLabel}. {comparison.scoreExplanation} This score is not a prediction of hiring success.</p>
+                  <p><strong>Evidence coverage:</strong> {comparison.evidenceCoverage}% of the total possible matching-dimension weight is comparable. Coverage describes available evidence, not hiring probability or candidate suitability.</p>
+                  <div>
+                    <h5>Matched evidence</h5>
+                    {comparison.matchedEvidence.length
+                      ? <ul>{comparison.matchedEvidence.map((item, index) => (
+                        <li key={`${item.dimension}-${item.requirement}-${index}`}>
+                          <strong>{item.requirement}</strong> ({item.profileEvidence} {item.jobEvidence})
+                        </li>
+                      ))}</ul>
+                      : <p>No comparable evidence matched.</p>}
+                  </div>
+                  <div>
+                    <h5>Unmatched requirements</h5>
+                    {comparison.unmatchedRequirements.length
+                      ? <ul>{comparison.unmatchedRequirements.map((requirement) => <li key={requirement}>{requirement}</li>)}</ul>
+                      : <p>No comparable requirements were unmatched.</p>}
+                  </div>
+                  <div>
+                    <h5>Unknown or unavailable information</h5>
+                    {comparison.unknownInformation.length
+                      ? <ul>{comparison.unknownInformation.map((information) => <li key={information}>{information}</li>)}</ul>
+                      : <p>All dimensions with available evidence were comparable.</p>}
+                    <p>Unmatched items mean the evidence was not found in the saved profile; they do not prove that you lack a skill or qualification. Confirm requirements with the original employer posting.</p>
+                  </div>
+                </>
+              )}
             </section>
           )}
           {roadmap && (

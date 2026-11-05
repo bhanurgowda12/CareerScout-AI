@@ -176,6 +176,12 @@ The status below describes the current implementation, not a guarantee of accura
 
 - Role/category, keyword, company, location, skill, work-mode, employment, and experience filters.
 - Source attribution, sorting, company grouping, profile comparison, and job-preparation roadmaps.
+- Profile comparison reports matched evidence, unmatched documented requirements, and unknown information across skills, career alignment, experience, education, location, work mode, and employment preferences.
+- Skills explicitly marked required in job-description text are scored as requirements; optional/preferred and negated mentions do not reduce the required-skills score. Provider skill tags and unqualified mentions retain their source/status as evidence, but are not assumed mandatory.
+- Education level and field are checked together on the same recorded education entry. A listing without an explicit degree-level requirement does not create an education mismatch.
+- Numeric experience is compared only when the listing clearly marks it as required; stated ranges are compared as ranges, preferred years are not mandatory, and ambiguous wording is reported as unknown. Existing title/description seniority classifications remain available when no mandatory numeric threshold is found.
+- Match scores use deterministic dimension weights (skills 45%, career alignment 20%, experience 15%, education 10%, location 4%, work mode 3%, employment type 3%). The weighted match score is normalized over comparable dimensions; evidence coverage is shown separately as comparable dimension weight divided by total possible weight. A score is withheld unless at least two dimensions, 40% of total weight, and three evidence comparisons are available.
+- Career alignment is binary: any saved career preference matching the listing gives the dimension full credit. Matching is keyword-based and does not assess skill proficiency, semantic equivalence, or actual hiring likelihood; missing profile evidence is unknown, not proof that the student lacks a qualification.
 - External LinkedIn Jobs, Naukri, Indeed, and Google Jobs searches are links, not integrated listings.
 
 **Working Process**

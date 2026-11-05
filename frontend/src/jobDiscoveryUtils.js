@@ -1,4 +1,5 @@
 import { EMPLOYMENT_TYPES, MAX_DESCRIPTION_LENGTH, isValidHttpUrl } from './jobApplicationUtils.js';
+import { compareJobRequirements, normalizeJobRequirements } from './jobMatchUtils.js';
 
 export const MAX_JOB_SEARCH_LENGTH = 100;
 export const MAX_JOB_LOCATION_LENGTH = 120;
@@ -849,47 +850,804 @@ export function extractJobRequirements(listing) {
   ])).values()];
 }
 
-export function compareListingWithProfile(listing, profile) {
-  const required = extractJobRequirements(listing);
-  const profileEvidence = [
-    ...(Array.isArray(profile?.skills) ? profile.skills : []),
-    ...(Array.isArray(profile?.projects) ? profile.projects.flatMap((project) => [
-      project?.name,
-      project?.description,
-      project?.technologies,
-    ]) : []),
-    ...(Array.isArray(profile?.certifications) ? profile.certifications.flatMap((certification) => [
-      certification?.name,
-      certification?.description,
-    ]) : []),
-  ].filter((value) => typeof value === 'string').join(' ');
-  const normalizedEvidence = normalizeSearchText(profileEvidence);
-  const matchedSkills = required.filter((skill) => {
-    const normalized = normalizeSearchText(skill);
-    return normalized && normalizedEvidence.includes(normalized);
+function classifySkillMention(clause, skill) {
+  const escaped = skill.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`(^|[^a-z0-9+#])(${escaped})(?=$|[^a-z0-9+#])`, 'i').exec(clause);
+  if (!match) return null;
+  const start = match.index + match[1].length;
+  const end = start + match[2].length;
+  const before = clause.slice(Math.max(0, start - 80), start);
+  const after = clause.slice(end, end + 80);
+  const context = `${before} ${match[2]} ${after}`;
+  if (/\bnot\s+(?:required|necessary|mandatory)\b|\bno\s+(?:previous|prior|professional|work)?\s*(?:experience|knowledge|expertise)?\s*[^.!?;]{0,50}\b(?:necessary|required|mandatory)\b/iu.test(context)) {
+    return 'negated';
+  }
+  const nearestCueDistance = (pattern) => {
+    let distance = Infinity;
+    for (const cue of context.matchAll(new RegExp(pattern.source, `${pattern.flags.replace('g', '')}g`))) {
+      const cueStart = cue.index ?? 0;
+      const cueEnd = cueStart + cue[0].length;
+      const skillStart = before.length + 1;
+      const skillEnd = skillStart + match[2].length;
+      distance = Math.min(distance, Math.max(0, skillStart - cueEnd, cueStart - skillEnd));
+    }
+    return distance;
+  };
+  const optionalDistance = nearestCueDistance(/\b(?:optional|preferred|preferable|desired|helpful|a\s+plus|nice\s+to\s+have|bonus)\b/iu);
+  const requiredDistance = nearestCueDistance(/\b(?:required|mandatory|must\s+(?:have|know|possess|meet)|candidates\s+must\s+(?:have|know|possess))\b/iu);
+  if (Math.min(optionalDistance, requiredDistance) <= 40) {
+    return optionalDistance < requiredDistance ? 'optional' : 'required';
+  }
+  if (/\b(?:required|mandatory)\s*(?::|skills?\s*(?::|include|are))\s*[^.!?;]*$/iu.test(before)) {
+    return 'required';
+  }
+  return 'mentioned';
+}
+
+export function extractJobRequirementEvidence(listing) {
+  const evidence = new Map();
+  const getEntry = (skill) => {
+    const normalized = normalizeJobRequirements([skill])[0];
+    const key = normalizeSearchText(normalized);
+    if (!evidence.has(key)) {
+      evidence.set(key, {
+        skill: normalized,
+        status: '',
+        source: [],
+        provenance: [],
+      });
+    }
+    return evidence.get(key);
+  };
+  stringsFrom(listing?.skills).forEach((skill) => {
+    const entry = getEntry(skill);
+    if (!entry.source.includes('provider')) entry.source.push('provider');
+    entry.provenance.push(`Provider skill tag: ${skill.trim()}`);
   });
+
+  const description = typeof listing?.description === 'string' ? listing.description : '';
+  const knownSkills = extractJobRequirements({ description, skills: [] });
+  const statusesBySkill = new Map();
+  description.split(/(?<=[.!?;])\s+|[;\n]+/u).forEach((clause) => {
+    knownSkills.forEach((skill) => {
+      const status = classifySkillMention(clause, skill);
+      if (!status) return;
+      const key = normalizeSearchText(normalizeJobRequirements([skill])[0]);
+      if (!statusesBySkill.has(key)) statusesBySkill.set(key, new Set());
+      statusesBySkill.get(key).add(status);
+      const entry = getEntry(skill);
+      if (!entry.source.includes('description')) entry.source.push('description');
+      entry.provenance.push(`Job description: "${clause.trim()}"`);
+    });
+  });
+
+  statusesBySkill.forEach((statuses, key) => {
+    const entry = evidence.get(key);
+    if (statuses.has('required') && (statuses.has('negated') || statuses.has('optional'))) {
+      entry.status = 'ambiguous';
+    } else if (statuses.has('required')) {
+      entry.status = 'required';
+    } else if (statuses.has('negated')) {
+      entry.status = 'negated';
+    } else if (statuses.has('optional')) {
+      entry.status = 'optional';
+    } else {
+      entry.status = 'mentioned';
+    }
+  });
+  evidence.forEach((entry) => {
+    if (!entry.status) entry.status = 'provider';
+    entry.provenance = [...new Set(entry.provenance)];
+  });
+  return [...evidence.values()];
+}
+
+const JOB_MATCH_WEIGHTS = {
+  skills: 45,
+  careerAlignment: 20,
+  experience: 15,
+  education: 10,
+  location: 4,
+  workMode: 3,
+  employmentType: 3,
+};
+
+const CAREER_ALIGNMENT_STOP_WORDS = new Set([
+  'and', 'area', 'areas', 'career', 'careers', 'development', 'engineer', 'engineering',
+  'for', 'in', 'of', 'or', 'role', 'roles', 'the', 'work',
+]);
+
+const EDUCATION_LEVELS = [
+  { level: 'doctorate', rank: 3, pattern: /\b(?:ph\.?\s*d\.?|doctorate|doctoral(?:\s+degree)?)\b/giu },
+  { level: 'master', rank: 2, pattern: /\b(?:master(?:['’]s)?|postgraduate|m\.?\s*tech|m\.?\s*s\.?|m\.?\s*e\.?|mba)\b/giu },
+  { level: 'bachelor', rank: 1, pattern: /\b(?:bachelor(?:['’]s)?|undergraduate|b\.?\s*tech|b\.?\s*e\.?|b\.?\s*sc|b\.?\s*s\.?|b\.?\s*a\.?|bca|bcom)\b/giu },
+  { level: 'associate', rank: 0, pattern: /\bassociate(?:['’]s)?\b/giu },
+];
+
+function stringsFrom(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item.trim()) : [];
+}
+
+function profileSkillEvidence(profile) {
+  const projects = Array.isArray(profile?.projects) ? profile.projects : [];
+  const certifications = Array.isArray(profile?.certifications) ? profile.certifications : [];
+  return {
+    skills: stringsFrom(profile?.skills),
+    projects: projects
+      .filter((project) => project && typeof project === 'object' && !Array.isArray(project))
+      .map((project) => ({
+        name: typeof project.name === 'string' ? project.name : '',
+        description: typeof project.description === 'string' ? project.description : '',
+        technologies: typeof project.technologies === 'string' ? project.technologies : '',
+      })),
+    certifications: certifications
+      .filter((certification) => certification && typeof certification === 'object' && !Array.isArray(certification))
+      .map((certification) => ({
+        name: typeof certification.name === 'string' ? certification.name : '',
+        issuer: typeof certification.issuer === 'string' ? certification.issuer : '',
+        description: typeof certification.description === 'string' ? certification.description : '',
+      })),
+  };
+}
+
+function hasSkillEvidence(evidence) {
+  return evidence.skills.length > 0
+    || evidence.projects.some((project) => Object.values(project).some((value) => value.trim()))
+    || evidence.certifications.some((certification) => Object.values(certification).some((value) => value.trim()));
+}
+
+function containsSkillEvidence(skill, evidence) {
+  return typeof evidence === 'string'
+    && Boolean(evidence.trim())
+    && compareJobRequirements([skill], [evidence]).matchedCount === 1;
+}
+
+function describeProfileSkillEvidence(skill, evidence) {
+  const savedSkill = evidence.skills.find((item) => containsSkillEvidence(skill, item));
+  if (savedSkill) return `Saved skill: ${savedSkill}.`;
+  const project = evidence.projects.find((item) => (
+    Object.values(item).some((value) => containsSkillEvidence(skill, value))
+  ));
+  if (project) {
+    const name = project.name.trim() || 'Unnamed project';
+    const technologies = project.technologies.trim();
+    return technologies
+      ? `Project "${name}" (technologies: ${technologies}).`
+      : `Project "${name}" includes matching evidence.`;
+  }
+  const certification = evidence.certifications.find((item) => (
+    Object.values(item).some((value) => containsSkillEvidence(skill, value))
+  ));
+  if (certification) {
+    const name = certification.name.trim() || 'Unnamed certification';
+    return `Certification "${name}" includes matching evidence.`;
+  }
+  return 'Found in saved skills, projects, or certifications.';
+}
+
+function describeJobSkillEvidence(skill, listing) {
+  const providerSkill = stringsFrom(listing?.skills).find((item) => containsSkillEvidence(skill, item));
+  if (providerSkill) return `Provider skill tag: ${providerSkill}.`;
+  const description = typeof listing?.description === 'string' ? listing.description : '';
+  return containsSkillEvidence(skill, description)
+    ? `Mentioned in the job description: ${skill}.`
+    : 'Identified in the listing skill evidence.';
+}
+
+function createDimension(id, label, weight, {
+  status = 'unknown',
+  score = null,
+  matchedEvidence = [],
+  unmatchedRequirements = [],
+  unknownInformation = [],
+} = {}) {
+  return {
+    id,
+    label,
+    weight,
+    status,
+    score,
+    evidenceCount: score === null ? 0 : matchedEvidence.length + unmatchedRequirements.length,
+    matchedEvidence,
+    unmatchedRequirements,
+    unknownInformation,
+    applicable: score !== null,
+  };
+}
+
+function careerPreferenceMatches(jobText, preference) {
+  if (matchesSearchTerm(jobText, preference)) return true;
+  const distinctiveTerms = normalizeSearchText(preference)
+    .split(/\s+/)
+    .filter((term) => term.length > 2 && !CAREER_ALIGNMENT_STOP_WORDS.has(term));
+  return distinctiveTerms.length > 1
+    && distinctiveTerms.every((term) => matchesSearchTerm(jobText, term));
+}
+
+function extractEducationRequirements(description) {
+  if (!description) return [];
+  const requirements = new Map();
+  for (const { level, rank, pattern } of EDUCATION_LEVELS) {
+    for (const match of description.matchAll(pattern)) {
+      const start = match.index ?? 0;
+      const before = description.slice(Math.max(0, start - 24), start);
+      const after = description.slice(start + match[0].length, start + match[0].length + 100);
+      const hasEducationContext = /\bdegree\s+(?:in|of)\s*$/iu.test(before)
+        || /^\s*(?:degree\b|in\b|of\b)/iu.test(after);
+      if (!hasEducationContext) continue;
+
+      const fieldTail = after
+        .replace(/^\s+of\s+(?:science|arts|engineering|technology|business)(?:\s+degree)?\s+in\b/iu, ' in')
+        .match(/^\s*(?:degree\s+)?in\s+([^.;\n,]+)/iu)?.[1] || '';
+      const field = fieldTail
+        .replace(/\s+(?:or\s+related(?:\s+field)?|or\s+equivalent|preferred|required)\b.*$/iu, '')
+        .trim();
+      const raw = field ? `${match[0].trim()} in ${field}` : match[0].trim();
+      requirements.set(`${level}:${normalizeSearchText(field)}`, { level, rank, field, raw });
+    }
+  }
+  return [...requirements.values()];
+}
+
+function profileEducationEvidence(profile) {
+  const records = [];
+  const addRecord = (entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+    const degree = ['degree', 'qualification']
+      .map((field) => entry[field])
+      .find((value) => typeof value === 'string' && value.trim()) || '';
+    const fields = ['specialization', 'branch', 'field']
+      .map((field) => entry[field])
+      .filter((value) => typeof value === 'string' && value.trim());
+    if (degree || fields.length) {
+      records.push({
+        degree: degree.trim(),
+        fields: [...new Set(fields.map((value) => value.trim()))],
+      });
+    }
+  };
+  if (typeof profile?.degree === 'string' || typeof profile?.branch === 'string') {
+    addRecord({ degree: profile.degree, branch: profile.branch });
+  }
+  if (Array.isArray(profile?.education)) {
+    profile.education.forEach(addRecord);
+  } else if (profile?.education && typeof profile.education === 'object') {
+    addRecord(profile.education);
+  }
+  return records;
+}
+
+function educationRank(value) {
+  const normalized = normalizeSearchText(value);
+  const compact = normalized.replace(/[^a-z0-9]/gu, '');
+  if (/\b(?:doctorate|doctoral)\b/u.test(normalized) || compact.includes('phd')) return 3;
+  if (/\b(?:master|postgraduate)\b/u.test(normalized)
+    || /^(?:mba|mtech|ms|msc|ma|me)$/u.test(compact)) return 2;
+  if (/\b(?:bachelor|undergraduate)\b/u.test(normalized)
+    || /^(?:btech|be|bsc|bs|ba|bca|bcom)$/u.test(compact)) return 1;
+  if (/\bassociate\b/u.test(normalized)) return 0;
+  return null;
+}
+
+function normalizeWorkMode(value) {
+  const normalized = normalizeSearchText(value);
+  if (['remote', 'remote work'].includes(normalized)) return 'Remote';
+  if (['hybrid', 'hybrid work'].includes(normalized)) return 'Hybrid';
+  if (['on site', 'onsite', 'in person'].includes(normalized)) return 'On-site';
+  return '';
+}
+
+function jobWorkModes(listing) {
+  const supplied = typeof listing?.workMode === 'string' ? listing.workMode : '';
+  const explicitModes = ['Remote', 'Hybrid', 'On-site']
+    .filter((mode) => matchesSearchTerm(supplied, mode));
+  if (explicitModes.length > 1) return [];
+  if (explicitModes.length === 1) return explicitModes;
+  const inferred = getKnownWorkMode(listing);
+  return inferred ? [inferred] : [];
+}
+
+function jobYearRequirement(listing) {
+  const texts = [
+    { source: 'description', value: listing?.description },
+    { source: 'experience level', value: listing?.experienceLevel },
+    ...(Array.isArray(listing?.experienceMetadata)
+      ? listing.experienceMetadata
+        .filter((entry) => typeof entry?.label === 'string'
+          && /\b(?:experience|years?\s+required)\b/iu.test(entry.label))
+        .map((entry) => ({ source: 'experience metadata', value: entry.value }))
+      : []),
+  ].filter((item) => typeof item.value === 'string');
+  const statements = [];
+  const expression = /(\d+(?:\.\d+)?)\s*(?:(?:-|–|—|to)\s*(\d+(?:\.\d+)?))?\s*(\+)?\s*(?:years?|yrs?)\b/giu;
+  texts.forEach(({ source, value }) => {
+    const clauses = value
+      .split(/[;!?]+|(?<!\d)\.(?!\d)|\s+and\s+(?=\d+(?:\.\d+)?\s*(?:-|–|—|to)?\s*\d*\s*\+?\s*(?:years?|yrs?)\b)/iu)
+      .filter(Boolean);
+    clauses.forEach((clause) => {
+      const yearMatches = [...clause.matchAll(expression)];
+      for (const match of clause.matchAll(expression)) {
+        const before = clause.slice(0, match.index);
+        const after = clause.slice((match.index ?? 0) + match[0].length);
+        const isNegated = /\bnot\s+(?:required|necessary|mandatory)\b/iu.test(after)
+          || /\bno\s+(?:previous|prior)?\s*experience\b[\s\S]{0,40}\b(?:necessary|required|mandatory)\b/iu.test(clause);
+        const cueDistance = (pattern) => {
+          const beforeWindow = before.slice(-35);
+          const context = `${beforeWindow} ${match[0]} ${after.slice(0, 35)}`;
+          const yearStart = beforeWindow.length + 1;
+          const yearEnd = yearStart + match[0].length;
+          let distance = Infinity;
+          for (const cue of context.matchAll(new RegExp(`${pattern.source}`, `${pattern.flags.replace('g', '')}g`))) {
+            const cueStart = cue.index ?? 0;
+            const cueEnd = cueStart + cue[0].length;
+            distance = Math.min(distance, Math.max(0, yearStart - cueEnd, cueStart - yearEnd));
+          }
+          return distance;
+        };
+        const preferredDistance = cueDistance(/\b(?:preferred|preferable|desired|helpful|a\s+plus|nice\s+to\s+have)\b/iu);
+        const requiredDistance = cueDistance(/\b(?:required|minimum|at\s+least|mandatory|must\s+(?:have|meet))\b/iu);
+        const isPreferred = preferredDistance <= 35 && preferredDistance <= requiredDistance;
+        const isRequired = requiredDistance <= 35 && requiredDistance <= preferredDistance;
+        const hasExperienceContext = source !== 'description'
+          || /\bexperience\b/iu.test(clause)
+          || (/\byears?\s+in\s+(?:the\s+)?(?:software\s+development|professional\s+services?|engineering|similar\s+roles?|related\s+roles?|(?:software|engineering|sales|marketing|finance|data|product|design)\s+(?:development|engineering|analysis|roles?))\b/iu.test(clause)
+            && (isRequired || isPreferred))
+          || (yearMatches.length > 1
+            && !/\b(?:warrant(?:y|ies)|service|product|subscription|support|maintenance)\b/iu.test(clause)
+            && (isRequired || isPreferred));
+        if (!hasExperienceContext) continue;
+        if (isNegated) {
+          statements.push({ status: 'negated', source, text: clause.trim() });
+        } else if (isPreferred && isRequired) {
+          statements.push({ status: 'ambiguous', source, text: clause.trim() });
+        } else if (isPreferred) {
+          statements.push({ status: 'preferred', source, text: clause.trim() });
+        } else if (isRequired) {
+          statements.push({
+            status: 'required',
+            minimum: Number.parseFloat(match[1]),
+            maximum: match[2] ? Number.parseFloat(match[2]) : null,
+            source,
+            text: clause.trim(),
+          });
+        } else if (hasExperienceContext) {
+          statements.push({ status: 'ambiguous', source, text: clause.trim() });
+        }
+      }
+    });
+  });
+  const requiredStatements = statements.filter((statement) => statement.status === 'required');
+  const requiredRanges = new Set(requiredStatements.map((statement) => (
+    `${statement.minimum}:${statement.maximum === null ? '' : statement.maximum}`
+  )));
+  if (statements.some((statement) => statement.status === 'ambiguous')
+    || requiredRanges.size > 1) {
+    return { status: 'ambiguous', statements };
+  }
+  if (requiredStatements.length) {
+    return { ...requiredStatements[0], status: 'required', statements };
+  }
+  if (statements.some((statement) => statement.status === 'preferred')) {
+    return { status: 'preferred', statements };
+  }
+  if (statements.some((statement) => statement.status === 'negated')) {
+    return { status: 'negated', statements };
+  }
+  return { status: 'none', statements };
+}
+
+function profileYearsExperience(profile) {
+  const value = profile?.yearsExperience ?? profile?.yearsOfExperience;
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+function experienceRank(value) {
+  const normalized = normalizeSearchText(value);
+  if (['beginner', 'fresher', 'graduate', 'fresher graduate'].includes(normalized)) return 0;
+  if (['intermediate', 'entry level', 'junior'].includes(normalized)) return 1;
+  if (['advanced', 'experienced', 'senior'].includes(normalized)) return 2;
+  return null;
+}
+
+export function compareListingWithProfile(listing, profile) {
+  const sourceProfile = profile && typeof profile === 'object' && !Array.isArray(profile) ? profile : {};
+  const skillEvidence = profileSkillEvidence(sourceProfile);
+  const requirementEvidence = extractJobRequirementEvidence(listing);
+  const requiredEvidence = requirementEvidence.filter((item) => item.status === 'required');
+  const required = requiredEvidence.length
+    ? normalizeJobRequirements(requiredEvidence.map((item) => item.skill))
+    : [];
+  const hasProfileSkills = hasSkillEvidence(skillEvidence);
+  const skillComparison = required.length && hasProfileSkills
+    ? compareJobRequirements(required, skillEvidence)
+    : null;
+  const matchedSkills = skillComparison?.matchedRequirements || [];
+  const skillResults = requirementEvidence.map((evidence) => {
+    const isRequired = evidence.status === 'required';
+    const status = !isRequired
+      ? evidence.status
+      : !hasProfileSkills
+        ? 'unknown'
+        : matchedSkills.includes(evidence.skill) ? 'matched' : 'unmatched';
+    return {
+      skill: evidence.skill,
+      status,
+      source: evidence.source,
+      provenance: evidence.provenance,
+      mandatory: isRequired,
+    };
+  });
+  const skillDimension = !required.length
+    ? createDimension('skills', 'Skills', JOB_MATCH_WEIGHTS.skills, {
+      unknownInformation: ['No explicitly required skills were identified. Provider tags and unqualified, optional, or negated mentions do not count as mandatory requirements.'],
+    })
+    : !hasProfileSkills
+      ? createDimension('skills', 'Skills', JOB_MATCH_WEIGHTS.skills, {
+        unknownInformation: ['No profile skills, project technologies, project descriptions, or certification evidence are available to compare.'],
+      })
+      : createDimension('skills', 'Skills', JOB_MATCH_WEIGHTS.skills, {
+        status: matchedSkills.length === required.length ? 'matched' : matchedSkills.length ? 'partial' : 'unmatched',
+        score: matchedSkills.length / required.length,
+        matchedEvidence: matchedSkills.map((skill) => ({
+          dimension: 'skills',
+          requirement: skill,
+          profileEvidence: describeProfileSkillEvidence(skill, skillEvidence),
+          jobEvidence: describeJobSkillEvidence(skill, listing),
+        })),
+        unmatchedRequirements: skillResults
+          .filter((item) => item.mandatory && item.status === 'unmatched')
+          .map((item) => `Skill: ${item.skill} (not documented in the saved profile)`),
+      });
+
+  const jobText = [
+    typeof listing?.title === 'string' ? listing.title : '',
+    typeof listing?.description === 'string' ? listing.description : '',
+    typeof listing?.category === 'string' ? listing.category : '',
+  ].filter(Boolean).join(' ');
+  const careerPreferences = [
+    ...stringsFrom(sourceProfile.interests),
+    ...stringsFrom(sourceProfile.careerInterests),
+    ...stringsFrom(sourceProfile.preferredIndustries),
+    ...stringsFrom(sourceProfile.preferredWorkAreas),
+  ];
+  const uniqueCareerPreferences = [...new Set(careerPreferences.map((item) => item.trim()))];
+  const matchedPreferences = uniqueCareerPreferences
+    .filter((preference) => careerPreferenceMatches(jobText, preference));
+  const careerDimension = !uniqueCareerPreferences.length
+    ? createDimension('careerAlignment', 'Career alignment', JOB_MATCH_WEIGHTS.careerAlignment, {
+      unknownInformation: ['No career interests, preferred industries, or preferred work areas are recorded in the profile.'],
+    })
+    : !jobText.trim()
+      ? createDimension('careerAlignment', 'Career alignment', JOB_MATCH_WEIGHTS.careerAlignment, {
+        unknownInformation: ['The job listing has no title, description, or category to compare with career preferences.'],
+      })
+      : createDimension('careerAlignment', 'Career alignment', JOB_MATCH_WEIGHTS.careerAlignment, {
+        status: matchedPreferences.length ? 'matched' : 'unmatched',
+        score: matchedPreferences.length ? 1 : 0,
+        matchedEvidence: matchedPreferences.map((preference) => ({
+          dimension: 'careerAlignment',
+          requirement: preference,
+          profileEvidence: `Saved career preference: ${preference}.`,
+          jobEvidence: 'Preference appears in the job title, description, or category.',
+        })),
+        unmatchedRequirements: matchedPreferences.length
+          ? []
+          : ['Career alignment: none of the saved career preferences appear in the job title, description, or category.'],
+      });
+
+  const seniority = getExperienceClassificationDetails(listing).seniority;
+  const profileExperience = typeof sourceProfile.experienceLevel === 'string'
+    ? sourceProfile.experienceLevel.trim()
+    : '';
+  const yearRequirement = jobYearRequirement(listing);
+  let experienceDimension;
+  if (yearRequirement.status === 'ambiguous') {
+    experienceDimension = createDimension('experience', 'Experience', JOB_MATCH_WEIGHTS.experience, {
+      unknownInformation: [`The listing's years-of-experience wording is ambiguous: ${yearRequirement.statements.map((item) => item.text).join('; ')}`],
+    });
+  } else if (yearRequirement.status === 'required') {
+    const years = profileYearsExperience(sourceProfile);
+    experienceDimension = years === null
+      ? createDimension('experience', 'Experience', JOB_MATCH_WEIGHTS.experience, {
+        unknownInformation: [`The listing states ${yearRequirement.minimum}${yearRequirement.maximum === null ? '+' : `–${yearRequirement.maximum}`} years of experience, but the profile has no numeric years-of-experience value.`],
+      })
+      : createDimension('experience', 'Experience', JOB_MATCH_WEIGHTS.experience, {
+        status: years >= yearRequirement.minimum
+          && (yearRequirement.maximum === null || years <= yearRequirement.maximum) ? 'matched' : 'unmatched',
+        score: years >= yearRequirement.minimum
+          && (yearRequirement.maximum === null || years <= yearRequirement.maximum) ? 1 : 0,
+        matchedEvidence: years >= yearRequirement.minimum
+          && (yearRequirement.maximum === null || years <= yearRequirement.maximum) ? [{
+          dimension: 'experience',
+          requirement: `${yearRequirement.minimum}${yearRequirement.maximum === null ? '+' : `–${yearRequirement.maximum}`} years`,
+          profileEvidence: `${years} years recorded in the profile.`,
+          jobEvidence: `Required experience: ${yearRequirement.text}.`,
+        }] : [],
+        unmatchedRequirements: years >= yearRequirement.minimum
+          && (yearRequirement.maximum === null || years <= yearRequirement.maximum)
+          ? []
+          : [`Experience: ${yearRequirement.minimum}${yearRequirement.maximum === null ? '+' : `–${yearRequirement.maximum}`} years required; ${years} years recorded in the profile.`],
+      });
+  } else if (!profileExperience || seniority.classification === 'unknown') {
+    experienceDimension = createDimension('experience', 'Experience', JOB_MATCH_WEIGHTS.experience, {
+      unknownInformation: [
+        !profileExperience
+          ? 'No self-reported experience level is recorded in the profile.'
+          : yearRequirement.status === 'preferred'
+            ? `The listing mentions preferred years of experience, but does not state a mandatory numeric minimum: ${yearRequirement.statements.map((item) => item.text).join('; ')}`
+            : `The listing experience requirement is unknown or ambiguous: ${seniority.evidence}`,
+      ],
+    });
+  } else {
+    const profileRank = experienceRank(profileExperience);
+    const requiredRank = experienceRank(seniority.classification);
+    experienceDimension = profileRank === null || requiredRank === null
+      ? createDimension('experience', 'Experience', JOB_MATCH_WEIGHTS.experience, {
+        unknownInformation: [`Profile level "${profileExperience}" or listing level "${seniority.classification}" cannot be compared reliably.`],
+      })
+      : createDimension('experience', 'Experience', JOB_MATCH_WEIGHTS.experience, {
+        status: profileRank >= requiredRank ? 'matched' : 'unmatched',
+        score: profileRank >= requiredRank ? 1 : 0,
+        matchedEvidence: profileRank >= requiredRank ? [{
+          dimension: 'experience',
+          requirement: seniority.classification,
+          profileEvidence: `Self-reported current level: ${profileExperience}.`,
+          jobEvidence: `${seniority.classification} (${seniority.source}-identified).`,
+        }] : [],
+        unmatchedRequirements: profileRank >= requiredRank
+          ? []
+          : [`Experience: listing indicates ${seniority.classification}; profile self-rating is ${profileExperience}.`],
+      });
+  }
+
+  const educationRequirements = extractEducationRequirements(
+    typeof listing?.description === 'string' ? listing.description : '',
+  );
+  const educationEvidence = profileEducationEvidence(sourceProfile);
+  const educationDimension = !educationRequirements.length
+    ? createDimension('education', 'Education', JOB_MATCH_WEIGHTS.education, {
+      unknownInformation: ['The listing does not explicitly state a degree-level education requirement.'],
+    })
+    : !educationEvidence.length
+      ? createDimension('education', 'Education', JOB_MATCH_WEIGHTS.education, {
+        unknownInformation: ['The profile does not include education evidence to compare with the stated requirement.'],
+      })
+      : (() => {
+        const matched = [];
+        const unmatched = [];
+        const unknown = [];
+        educationRequirements.forEach((requirement) => {
+          const knownRanks = educationEvidence.map((record) => educationRank(record.degree)).filter((rank) => rank !== null);
+          if (!knownRanks.length) {
+            unknown.push(`Cannot determine whether the recorded education meets "${requirement.raw}" because its degree level is unavailable or unrecognized.`);
+            return;
+          }
+          const qualifyingRecords = educationEvidence.filter((record) => {
+            const rank = educationRank(record.degree);
+            return rank !== null && rank >= requirement.rank;
+          });
+          if (!qualifyingRecords.length) {
+            if (educationEvidence.some((record) => educationRank(record.degree) === null)) {
+              unknown.push(`Cannot determine whether an unrecognized recorded degree meets "${requirement.raw}".`);
+            } else {
+              unmatched.push(`Education: ${requirement.raw} (recorded degree level does not meet this stated level).`);
+            }
+            return;
+          }
+          if (!requirement.field) {
+            const record = qualifyingRecords[0];
+            matched.push({
+              dimension: 'education',
+              requirement: requirement.raw,
+              profileEvidence: [record.degree, ...record.fields].filter(Boolean).join(' — '),
+              jobEvidence: `Explicit education requirement: ${requirement.raw}.`,
+            });
+            return;
+          }
+          const matchingRecord = qualifyingRecords.find((record) => (
+            record.fields.some((field) => matchesSearchTerm(field, requirement.field))
+          ));
+          if (matchingRecord) {
+            matched.push({
+              dimension: 'education',
+              requirement: requirement.raw,
+              profileEvidence: [matchingRecord.degree, ...matchingRecord.fields].filter(Boolean).join(' — '),
+              jobEvidence: `Explicit education requirement: ${requirement.raw}.`,
+            });
+          } else {
+            const hasUnknownField = qualifyingRecords.some((record) => record.fields.length === 0)
+              || educationEvidence.some((record) => educationRank(record.degree) === null);
+            if (hasUnknownField) {
+              unknown.push(`The listing requires education in ${requirement.field}, but a qualifying degree has no recorded field of study.`);
+            } else {
+              unmatched.push(`Education field: ${requirement.field} (not found on any recorded degree that meets the required level).`);
+            }
+          }
+        });
+        const total = matched.length + unmatched.length;
+        const score = total ? matched.length / total : null;
+        return createDimension('education', 'Education', JOB_MATCH_WEIGHTS.education, {
+          status: score === null
+            ? 'unknown'
+            : unknown.length ? 'partial' : score === 1 ? 'matched' : score > 0 ? 'partial' : 'unmatched',
+          score,
+          matchedEvidence: matched,
+          unmatchedRequirements: unmatched,
+          unknownInformation: unknown,
+        });
+      })();
+
+  const preferredLocations = stringsFrom(sourceProfile.preferredLocations);
+  const jobLocation = typeof listing?.location === 'string' ? listing.location.trim() : '';
+  const locationResults = preferredLocations.map((preference) => ({
+    preference,
+    result: getLocationMatch(listing, preference),
+  }));
+  const locationMatches = locationResults.filter(({ result }) => (
+    result === 'local' || result === 'remote-global'
+  ));
+  const locationIsUnspecified = locationResults.some(({ result }) => result === 'remote-unspecified');
+  const locationDimension = !jobLocation
+    ? createDimension('location', 'Location', JOB_MATCH_WEIGHTS.location, {
+      unknownInformation: ['The listing does not provide a location.'],
+    })
+    : !preferredLocations.length
+      ? createDimension('location', 'Location', JOB_MATCH_WEIGHTS.location, {
+        unknownInformation: ['No preferred location is recorded in the profile.'],
+      })
+      : locationIsUnspecified && !locationMatches.length
+        ? createDimension('location', 'Location', JOB_MATCH_WEIGHTS.location, {
+          unknownInformation: ['The listing is remote but does not state whether it is available in the preferred location.'],
+        })
+      : createDimension('location', 'Location', JOB_MATCH_WEIGHTS.location, {
+        status: locationMatches.length ? 'matched' : 'unmatched',
+        score: locationMatches.length ? 1 : 0,
+        matchedEvidence: locationMatches.map(({ preference, result }) => ({
+          dimension: 'location',
+          requirement: preference,
+          profileEvidence: `Preferred location: ${preference}.`,
+          jobEvidence: result === 'remote-global'
+            ? 'The listing states a worldwide remote location.'
+            : `Listing location: ${jobLocation}.`,
+        })),
+        unmatchedRequirements: locationMatches.length ? [] : [`Location: listing location "${jobLocation}" does not match the saved preferred locations.`],
+      });
+
+  const preferredWorkModes = stringsFrom(sourceProfile.preferredWorkModes)
+    .map(normalizeWorkMode)
+    .filter(Boolean);
+  const listingWorkModes = jobWorkModes(listing);
+  const workModeDimension = !listingWorkModes.length
+    ? createDimension('workMode', 'Work mode', JOB_MATCH_WEIGHTS.workMode, {
+      unknownInformation: ['The listing work mode is missing or ambiguous.'],
+    })
+    : !preferredWorkModes.length
+      ? createDimension('workMode', 'Work mode', JOB_MATCH_WEIGHTS.workMode, {
+        unknownInformation: ['No preferred work mode is recorded in the profile.'],
+      })
+      : (() => {
+        const matches = preferredWorkModes.filter((mode) => listingWorkModes.includes(mode));
+        return createDimension('workMode', 'Work mode', JOB_MATCH_WEIGHTS.workMode, {
+          status: matches.length ? 'matched' : 'unmatched',
+          score: matches.length ? 1 : 0,
+          matchedEvidence: matches.map((mode) => ({
+            dimension: 'workMode',
+            requirement: mode,
+            profileEvidence: `Preferred work mode: ${mode}.`,
+            jobEvidence: `Listing work mode: ${mode}.`,
+          })),
+          unmatchedRequirements: matches.length ? [] : [`Work mode: listing is ${listingWorkModes.join(', ')}, not among the saved preferences.`],
+        });
+      })();
+
+  const preferredEmploymentTypes = stringsFrom(sourceProfile.preferredEmploymentTypes)
+    .flatMap((value) => getKnownEmploymentTypes({ employmentType: value }));
+  const listingEmploymentTypes = getKnownEmploymentTypes(listing);
+  const employmentDimension = listingEmploymentTypes.length !== 1
+    ? createDimension('employmentType', 'Employment type', JOB_MATCH_WEIGHTS.employmentType, {
+      unknownInformation: [listingEmploymentTypes.length
+        ? 'The listing contains multiple or conflicting employment types.'
+        : 'The listing does not provide a recognized employment type.'],
+    })
+    : !preferredEmploymentTypes.length
+      ? createDimension('employmentType', 'Employment type', JOB_MATCH_WEIGHTS.employmentType, {
+        unknownInformation: ['No preferred employment type is recorded in the profile.'],
+      })
+      : (() => {
+        const matches = preferredEmploymentTypes.filter((type) => listingEmploymentTypes.includes(type));
+        return createDimension('employmentType', 'Employment type', JOB_MATCH_WEIGHTS.employmentType, {
+          status: matches.length ? 'matched' : 'unmatched',
+          score: matches.length ? 1 : 0,
+          matchedEvidence: matches.map((type) => ({
+            dimension: 'employmentType',
+            requirement: type,
+            profileEvidence: `Preferred employment type: ${type}.`,
+            jobEvidence: `Listing employment type: ${type}.`,
+          })),
+          unmatchedRequirements: matches.length ? [] : [`Employment type: listing is ${listingEmploymentTypes[0]}, not among the saved preferences.`],
+        });
+      })();
+
+  const dimensions = [
+    skillDimension,
+    careerDimension,
+    experienceDimension,
+    educationDimension,
+    locationDimension,
+    workModeDimension,
+    employmentDimension,
+  ];
+  const applicableDimensions = dimensions.filter((dimension) => dimension.applicable);
+  const comparableWeight = applicableDimensions.reduce((sum, dimension) => sum + dimension.weight, 0);
+  const totalPossibleWeight = dimensions.reduce((sum, dimension) => sum + dimension.weight, 0);
+  const evidenceCoverage = totalPossibleWeight
+    ? Math.round(comparableWeight / totalPossibleWeight * 100)
+    : 0;
+  const comparableEvidenceCount = applicableDimensions.reduce(
+    (sum, dimension) => sum + dimension.evidenceCount,
+    0,
+  );
+  const canScore = applicableDimensions.length >= 2
+    && comparableWeight >= 40
+    && comparableEvidenceCount >= 3;
+  const score = canScore
+    ? Math.round(applicableDimensions.reduce(
+      (sum, dimension) => sum + dimension.score * dimension.weight,
+      0,
+    ) / comparableWeight * 100)
+    : null;
+  const weightSummary = dimensions
+    .map((dimension) => `${dimension.label} ${dimension.weight}%`)
+    .join(', ');
+  const scoreExplanation = canScore
+    ? `Weighted average across ${applicableDimensions.length} comparable dimensions and ${comparableEvidenceCount} evidence comparisons (${comparableWeight}% of the total possible weight): ${weightSummary}. Missing or ambiguous dimensions are excluded, not scored as mismatches.`
+    : `A percentage is withheld because only ${applicableDimensions.length} dimensions (${comparableWeight}% of total weight) and ${comparableEvidenceCount} evidence comparisons are comparable. A score requires at least 2 dimensions, 40% of the total weight, and 3 evidence comparisons. Missing or ambiguous information is unknown, not a mismatch.`;
+  const matchedEvidence = dimensions.flatMap((dimension) => dimension.matchedEvidence);
+  const unmatchedRequirements = dimensions.flatMap((dimension) => dimension.unmatchedRequirements);
+  const unknownInformation = dimensions.flatMap((dimension) => dimension.unknownInformation);
   const needsVerification = required.filter((skill) => !matchedSkills.includes(skill));
   return {
     matchedSkills,
     needsVerification,
     identifiedRequirements: required.length,
-    score: required.length ? Math.round((matchedSkills.length / required.length) * 100) : null,
-    scoreLabel: required.length ? 'share of identified requirements found in your profile' : 'Not enough structured requirements to calculate',
+    requirements: skillResults,
+    requirementEvidence,
+    dimensions,
+    matchedEvidence,
+    unmatchedRequirements,
+    unknownInformation,
+    score,
+    evidenceCoverage,
+    comparableWeight,
+    totalPossibleWeight,
+    scoreLabel: canScore ? 'weighted evidence-match score' : 'Not enough comparable evidence to score',
+    scoreExplanation,
+    comparableDimensionCount: applicableDimensions.length,
+    comparableEvidenceCount,
   };
 }
 
 export function createJobPreparationRoadmap(listing, profile, durationWeeks = 4) {
   const weeks = [2, 4, 8, 12].includes(Number(durationWeeks)) ? Number(durationWeeks) : 4;
   const comparison = compareListingWithProfile(listing, profile);
-  const targetSkills = (comparison.needsVerification.length
-    ? comparison.needsVerification
-    : comparison.matchedSkills).slice(0, Math.min(6, weeks));
+  const identifiedSkills = extractJobRequirements(listing);
+  const profileEvidence = profileSkillEvidence(profile);
+  const roadmapSkillMatches = identifiedSkills.length && hasSkillEvidence(profileEvidence)
+    ? compareJobRequirements(identifiedSkills, profileEvidence).matchedRequirements
+    : [];
+  const roadmapSkillsToVerify = identifiedSkills.filter((skill) => !roadmapSkillMatches.includes(skill));
+  const targetSkills = (roadmapSkillsToVerify.length
+    ? roadmapSkillsToVerify
+    : roadmapSkillMatches.length ? roadmapSkillMatches : identifiedSkills)
+    .slice(0, Math.min(6, weeks));
   const role = listing?.title || 'this role';
   const perSkill = Math.max(1, Math.floor((weeks - 1) / Math.max(1, targetSkills.length)));
   const tasks = targetSkills.map((skill, index) => ({
     id: `skill-${index}`,
     week: Math.min(weeks, index * perSkill + 1),
-    title: `${comparison.matchedSkills.includes(skill) ? 'Strengthen' : 'Learn and verify'} ${skill}`,
+    title: `${roadmapSkillMatches.includes(skill) ? 'Strengthen' : 'Learn and verify'} ${skill}`,
     objective: `Review how ${skill} is used in the ${role} posting and document your current evidence.`,
     exercise: `Complete a small ${role}-relevant exercise that demonstrates ${skill}; record the result and what you learned.`,
     milestone: `Create one reviewable artifact demonstrating ${skill}.`,
