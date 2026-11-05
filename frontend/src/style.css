@@ -2522,8 +2522,14 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .job-match-field label { color: var(--ink); font-size: 12px; }
 .job-match-field label span { color: var(--muted); font-weight: 500; }
 .job-match-field textarea { min-height: 150px; padding: 13px 14px; border-color: var(--line); border-radius: var(--radius-sm); background: var(--paper); color: var(--ink); font: 13px/1.6 'DM Sans', sans-serif; }
-.job-match-field:nth-of-type(2) textarea { min-height: 120px; }
+.job-match-resume-text textarea { min-height: 120px; }
 .job-match-field textarea:focus-visible { outline: 3px solid #6c9b75; outline-offset: 2px; box-shadow: var(--focus-ring); }
+.job-match-resume-upload input[type="file"] { width: 100%; padding: 11px; border: 1px dashed var(--line); border-radius: var(--radius-sm); background: var(--paper); color: var(--ink); font: 11px 'DM Sans', sans-serif; }
+.job-match-resume-upload input[type="file"]:focus-visible { outline: 3px solid #6c9b75; outline-offset: 2px; box-shadow: var(--focus-ring); }
+.job-match-resume-file-details { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.job-match-resume-filename { min-width: 0; color: var(--ink-subtle); font-size: 11px; overflow-wrap: anywhere; }
+.job-match-resume-upload .job-match-progress { margin: 0; }
+.job-match-resume-upload .job-match-inline-note { margin: 0; }
 .job-match-field-meta { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .job-match-field-meta span:first-child { max-width: 620px; }
 .job-match-field-meta span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
@@ -2560,6 +2566,7 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .job-match-learn { min-height: 31px; padding: 4px 8px; color: var(--green); font-size: 10px; }
 .job-match-limitations { margin-top: 21px; padding-top: 15px; border-top: 1px solid var(--line); }
 :root[data-theme="dark"] .job-match-field textarea { border-color: var(--line); background: #19221c; color: var(--ink); }
+:root[data-theme="dark"] .job-match-resume-upload input[type="file"] { border-color: var(--line); background: #19221c; color: var(--ink); }
 :root[data-theme="dark"] .job-match-error { border-color: #a85b4d; background: #3b2824; color: #f0b7a9; }
 :root[data-theme="dark"] .job-match-state,
 :root[data-theme="dark"] .job-match-form,
@@ -2576,6 +2583,7 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
   .job-match-back { align-self: flex-start; }
   .job-match-form, .job-match-results { padding: 17px; }
   .job-match-field-meta { flex-direction: column; gap: 4px; }
+  .job-match-resume-file-details { align-items: flex-start; flex-direction: column; }
   .job-match-skill-groups { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .job-match-metrics { grid-template-columns: minmax(0, 1fr); }
   .job-match-results-header h2 { font-size: 20px; }

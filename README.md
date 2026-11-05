@@ -155,7 +155,9 @@ The status below describes the current implementation, not a guarantee of accura
 **Key Features**
 
 - Gemini extracts explicitly stated skills and competencies through Firebase AI Logic.
-- Browser-side comparison uses profile skills, projects, certifications, and optional pasted resume text.
+- Browser-side comparison uses profile skills, projects, certifications, and optional pasted or PDF/DOCX resume text.
+- PDF and DOCX resumes are parsed locally in the browser, limited to 5 MB (DOCX archives are also limited to 25 MB expanded), and capped at 12,000 extracted characters. The extracted text can be reviewed and edited before matching.
+- Resume files and text are not uploaded or persisted and are not sent to Gemini. Image-only/scanned PDFs are unsupported because OCR is not provided.
 - Results show matching and unverified requirements with a text-match percentage.
 - The result is not a measure of competence, suitability, or hiring probability.
 
@@ -163,8 +165,9 @@ The status below describes the current implementation, not a guarantee of accura
 
 1. Load the user’s profile.
 2. Submit a job description for Gemini requirement extraction.
-3. Compare extracted requirements with profile and optional resume evidence.
-4. Review matched and unverified items and open related learning resources.
+3. Optionally paste resume text or select a PDF/DOCX file for local text extraction, then review and edit the text.
+4. Compare extracted requirements with profile and optional resume evidence.
+5. Review matched and unverified items and open related learning resources.
 
 ### 2.6 Advanced Job Discovery
 
@@ -381,10 +384,11 @@ The career recommendation flow uses Gemini `gemini-3.8-flash` through Firebase A
 
 1. The user submits a job description from the Job Match Analyzer.
 2. Firebase AI Logic asks Gemini to extract explicitly stated requirements.
-3. The frontend compares extracted requirements with saved skills, projects, certifications, and optional pasted resume text.
-4. The interface presents matching and unverified text evidence.
+3. The user may paste resume text or select a PDF/DOCX file for local extraction. This supports text-based documents only, not scanned/image-only PDFs.
+4. The frontend compares the extracted requirements with saved skills, projects, certifications, and optional pasted or extracted resume text.
+5. The interface presents matching and unverified text evidence.
 
-The pasted resume text is compared in the browser by this analyzer; it is not saved or sent by that comparison step. Job descriptions are sent to Gemini for extraction. Matching percentages are not verified skill or hiring scores.
+Pasted and extracted resume text are compared in the browser for the current session; neither the selected file nor its text is saved or sent to Gemini. Only the job description is sent to Gemini for requirement extraction. Matching percentages are not verified skill or hiring scores.
 
 ### 6.5 Skill Gap Analysis
 
