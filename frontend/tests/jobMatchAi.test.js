@@ -165,6 +165,20 @@ test('extractor sends only the prompt to the selected model and ignores profile/
   assert.equal(FALLBACK_JOB_MATCH_MODEL, 'gemini-3.8-flash');
 });
 
+test('resume content supplied as an option is never included in the Gemini prompt', async () => {
+  const privateResumeText = 'PRIVATE RESUME CONTENT';
+  let receivedPrompt = '';
+  const extract = createJobRequirementExtractor(async (prompt) => {
+    receivedPrompt = prompt;
+    return '{"requirements":["Python"]}';
+  });
+
+  await extract(validDescription, { resumeText: privateResumeText });
+
+  assert.match(receivedPrompt, /Looking for Python and SQL experience/);
+  assert.doesNotMatch(receivedPrompt, /PRIVATE RESUME CONTENT/);
+});
+
 test('uses Firebase JSON Schema generation configuration with only supported schema fields', () => {
   assert.deepEqual(Object.keys(JOB_REQUIREMENT_GENERATION_CONFIG), [
     'responseMimeType',

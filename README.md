@@ -155,7 +155,9 @@ The status below describes the current implementation, not a guarantee of accura
 **Key Features**
 
 - Gemini extracts explicitly stated skills and competencies through Firebase AI Logic.
-- Browser-side comparison uses profile skills, projects, certifications, and optional pasted resume text.
+- Browser-side comparison uses profile skills, projects, certifications, and optional pasted or PDF/DOCX resume text.
+- PDF and DOCX resumes are parsed locally in the browser, limited to 5 MB (DOCX archives are also limited to 25 MB expanded), and capped at 12,000 extracted characters. The extracted text can be reviewed and edited before matching.
+- Resume files and text are not uploaded or persisted and are not sent to Gemini. Image-only/scanned PDFs are unsupported because OCR is not provided.
 - Results show matching and unverified requirements with a text-match percentage.
 - The result is not a measure of competence, suitability, or hiring probability.
 
@@ -163,8 +165,9 @@ The status below describes the current implementation, not a guarantee of accura
 
 1. Load the user’s profile.
 2. Submit a job description for Gemini requirement extraction.
-3. Compare extracted requirements with profile and optional resume evidence.
-4. Review matched and unverified items and open related learning resources.
+3. Optionally paste resume text or select a PDF/DOCX file for local text extraction, then review and edit the text.
+4. Compare extracted requirements with profile and optional resume evidence.
+5. Review matched and unverified items and open related learning resources.
 
 ### 2.6 Advanced Job Discovery
 
@@ -176,6 +179,13 @@ The status below describes the current implementation, not a guarantee of accura
 
 - Role/category, keyword, company, location, skill, work-mode, employment, and experience filters.
 - Source attribution, sorting, company grouping, profile comparison, and job-preparation roadmaps.
+- Profile comparison reports matched evidence, unmatched documented requirements, and unknown information across skills, career alignment, experience, education, location, work mode, and employment preferences.
+- Skills explicitly marked required in job-description text are scored as requirements; optional/preferred and negated mentions do not reduce the required-skills score. Provider skill tags and unqualified mentions retain their source/status as evidence, but are not assumed mandatory.
+- Education level and field are checked together on the same recorded education entry. A listing without an explicit degree-level requirement does not create an education mismatch.
+- Numeric experience is compared only when the listing clearly marks it as required; stated ranges are compared as ranges, preferred years are not mandatory, and ambiguous wording is reported as unknown. Existing title/description seniority classifications remain available when no mandatory numeric threshold is found.
+- Match scores use deterministic dimension weights (skills 45%, career alignment 20%, experience 15%, education 10%, location 4%, work mode 3%, employment type 3%). The weighted match score is normalized over comparable dimensions; evidence coverage is shown separately as comparable dimension weight divided by total possible weight. A score is withheld unless at least two dimensions, 40% of total weight, and three evidence comparisons are available.
+- Job cards calculate and show match score and evidence coverage separately. Results can be sorted by best match, and “Recommended from these results” ranks up to five sufficiently evidenced jobs from the current filtered provider results. Recommendations do not represent every available opening; match scores are not hiring predictions. Scores refresh from the saved profile while Job Discovery is open.
+- Career alignment is binary: any saved career preference matching the listing gives the dimension full credit. Matching is keyword-based and does not assess skill proficiency, semantic equivalence, or actual hiring likelihood; missing profile evidence is unknown, not proof that the student lacks a qualification.
 - External LinkedIn Jobs, Naukri, Indeed, and Google Jobs searches are links, not integrated listings.
 
 **Working Process**
@@ -207,20 +217,23 @@ The status below describes the current implementation, not a guarantee of accura
 
 **Purpose**
 
-- Show which career-path or job-listing requirements have matching profile evidence.
+- Show which selected career-path skills have matching profile evidence and connect unverified skills to a recommended learning sequence.
 
 **Key Features**
 
-- Career recommendations compare profile evidence with catalogue pathways.
+- Career skill evidence is recalculated from the current saved profile skills, project entries, and certification entries against the selected pathway's target skills. Existing saved plan order is retained, and remaining pathway targets are supplied from the career catalogue.
+- Skills with matching profile evidence are shown as demonstrated with the source of the match. Skills without a match are unverified, not proof that the user lacks proficiency.
+- Beginner, Intermediate, and Advanced labels describe the recommended sequence only; they are not user proficiency ratings.
+- Learning completion remains user-controlled and is stored in the user's Firestore `skillProgress` collection, scoped by career and skill.
 - Job analysis compares extracted requirements with profile and optional resume text.
 - Listing comparison identifies requirements found in listing text or provider skill tags.
 - A missing text match means “unverified”; it does not establish that the user lacks a skill.
 
 **Working Process**
 
-1. Select a saved career path or analyze a job listing.
-2. Compare available requirements with the user’s profile evidence.
-3. Review matched items and areas to verify or prepare.
+1. Select a saved career recommendation and pathway.
+2. Compare its target skills with the latest saved profile skills, projects, and certifications using the shared skill-matching utility.
+3. Review demonstrated evidence and unverified skills, then use the preserved learning sequence and update completion progress as desired.
 
 ### 2.9 Learning Resources
 
@@ -374,10 +387,11 @@ The career recommendation flow uses Gemini `gemini-3.8-flash` through Firebase A
 
 1. The user submits a job description from the Job Match Analyzer.
 2. Firebase AI Logic asks Gemini to extract explicitly stated requirements.
-3. The frontend compares extracted requirements with saved skills, projects, certifications, and optional pasted resume text.
-4. The interface presents matching and unverified text evidence.
+3. The user may paste resume text or select a PDF/DOCX file for local extraction. This supports text-based documents only, not scanned/image-only PDFs.
+4. The frontend compares the extracted requirements with saved skills, projects, certifications, and optional pasted or extracted resume text.
+5. The interface presents matching and unverified text evidence.
 
-The pasted resume text is compared in the browser by this analyzer; it is not saved or sent by that comparison step. Job descriptions are sent to Gemini for extraction. Matching percentages are not verified skill or hiring scores.
+Pasted and extracted resume text are compared in the browser for the current session; neither the selected file nor its text is saved or sent to Gemini. Only the job description is sent to Gemini for requirement extraction. Matching percentages are not verified skill or hiring scores.
 
 ### 6.5 Skill Gap Analysis
 

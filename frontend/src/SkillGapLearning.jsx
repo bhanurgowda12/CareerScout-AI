@@ -13,14 +13,17 @@ import {
   where,
 } from 'firebase/firestore';
 import { auth, firestore } from './firebase.js';
-import { getCareerProgressDocumentId } from './careerCatalog.js';
+import { buildCareerLearningPlan, getCareerProgressDocumentId } from './careerCatalog.js';
+import { normalizeJobRequirements, normalizeSkillName } from './jobMatchUtils.js';
 import { getResourceById } from './resourceCatalog.js';
 import {
   isCurrentLearningResourceRequest,
   requestLearningResources,
 } from './learningResourcesApi.js';
+import { calculateSkillGaps } from './skillGapUtils.js';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const EMPTY_PROFILE = {};
 const LEARNING_LANGUAGES = [
   { code: 'en', label: 'English' },
   { code: 'kn', label: 'Kannada (ಕನ್ನಡ)' },
@@ -32,13 +35,50 @@ const LEARNING_LANGUAGES = [
   { code: 'bn', label: 'Bengali (বাংলা)' },
 ];
 
-function getSkillsToLearn(career) {
-  const skillPlan = Array.isArray(career?.skillLearningPlan)
+function getSkillKey(skill) {
+  return normalizeSkillName(skill).toLocaleLowerCase('en-US');
+}
+
+function getSkillsToLearn(career, pathwayId, profile) {
+  const savedPlan = Array.isArray(career?.skillLearningPlan)
     ? [...career.skillLearningPlan].sort((first, second) => first.sequenceOrder - second.sequenceOrder)
     : [];
-  return skillPlan.length
-    ? skillPlan
+  const savedSkills = savedPlan.length
+    ? savedPlan
     : (career?.missingSkills || []).map((skill, index) => ({ skill, sequenceOrder: index + 1 }));
+  const catalogPlan = buildCareerLearningPlan(
+    career?.careerId || career?.careerPath,
+    pathwayId || career?.pathwayId,
+    profile || {},
+  );
+  const pathwaySkills = catalogPlan?.steps || [];
+  if (!pathwaySkills.length) return savedSkills;
+
+  const seen = new Set();
+  const result = [];
+  savedSkills.forEach((plan, index) => {
+    if (typeof plan?.skill !== 'string' || !plan.skill.trim()) return;
+    const skill = normalizeJobRequirements([plan.skill])[0];
+    const key = getSkillKey(skill);
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push({ ...plan, skill, sequenceOrder: plan.sequenceOrder || index + 1 });
+  });
+
+  let nextSequence = Math.max(0, ...result.map(({ sequenceOrder }) => Number(sequenceOrder) || 0)) + 1;
+  pathwaySkills.forEach((step) => {
+    const skill = normalizeJobRequirements([step.skill])[0];
+    const key = getSkillKey(skill);
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push({
+      ...step,
+      skill,
+      sequenceOrder: nextSequence,
+    });
+    nextSequence += 1;
+  });
+  return result;
 }
 
 function canUseProfile(user) {
@@ -164,6 +204,8 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
   const [savedRecommendations, setSavedRecommendations] = useState([]);
   const [recommendationsLoading, setRecommendationsLoading] = useState(true);
   const [recommendationsError, setRecommendationsError] = useState('');
+  const [currentProfile, setCurrentProfile] = useState(null);
+  const [currentProfileOwnerUid, setCurrentProfileOwnerUid] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [selectedCareerPath, setSelectedCareerPath] = useState('');
   const [selectedPathwayId, setSelectedPathwayId] = useState('');
@@ -193,13 +235,19 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
 
     async function loadSavedRecommendations() {
       setSavedRecommendations([]);
+      setCurrentProfile(null);
+      setCurrentProfileOwnerUid('');
       setSelectedId('');
       setRecommendationsError('');
       if (focusedSkillMode) {
+        setCurrentProfile({});
+        setCurrentProfileOwnerUid(user?.uid || '');
         setRecommendationsLoading(false);
         return;
       }
       if (!canUseProfile(user) || auth?.currentUser?.uid !== user.uid || !firestore) {
+        setCurrentProfile({});
+        setCurrentProfileOwnerUid(user?.uid || '');
         setRecommendationsLoading(false);
         setRecommendationsError('Sign in with a verified account to load your saved career recommendations.');
         return;
@@ -217,7 +265,8 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
         ]);
         if (cancelled || auth.currentUser?.uid !== user.uid) return;
         const records = snapshot.docs.map((saved) => ({ id: saved.id, ...saved.data() }));
-        const savedSelection = profileSnapshot.exists() ? profileSnapshot.data().selectedCareerPathway : null;
+        const profile = profileSnapshot.exists() ? profileSnapshot.data() : {};
+        const savedSelection = profile.selectedCareerPathway || null;
         const savedRecord = savedSelection?.recommendationId
           ? records.find((record) => record.id === savedSelection.recommendationId)
           : null;
@@ -234,6 +283,8 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
         )) || initialRecord?.careerRecommendations?.find((career) => career.careerPath === focusCareerPath)
           || initialRecord?.careerRecommendations?.[0];
         setSavedRecommendations(records);
+        setCurrentProfile(profile);
+        setCurrentProfileOwnerUid(user.uid);
         setSelectedId(initialRecord?.id || '');
         setSelectedCareerPath(initialCareer?.careerPath || '');
         setSelectedPathwayId(initialCareer?.pathwayId || '');
@@ -257,12 +308,22 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
   );
   const careers = selectedRecord?.careerRecommendations || [];
   const selectedCareer = careers.find((career) => career.careerPath === selectedCareerPath) || careers[0] || null;
+  const activeProfile = currentProfileOwnerUid === user?.uid ? currentProfile || EMPTY_PROFILE : EMPTY_PROFILE;
+  const learningPlans = useMemo(
+    () => getSkillsToLearn(selectedCareer, selectedPathwayId, activeProfile),
+    [selectedCareer, selectedPathwayId, activeProfile],
+  );
+  const skillGapAnalysis = useMemo(
+    () => calculateSkillGaps(learningPlans, activeProfile),
+    [learningPlans, activeProfile],
+  );
+  const skillGapsByKey = new Map(skillGapAnalysis.skills.map((item) => [getSkillKey(item.skill), item]));
   const activeResourceContext = useRef({});
   activeResourceContext.current = {
     userId: user?.uid,
     focusedSkillMode,
     skill: focusedSkill,
-    skills: getSkillsToLearn(selectedCareer).map(({ skill }) => skill),
+    skills: learningPlans.map(({ skill }) => skill),
     languages: submittedLanguages,
   };
   const visibleResourcesBySkill = resourcesOwnerUid === user?.uid ? resourcesBySkill : {};
@@ -475,7 +536,7 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
     if (!submittedLanguages?.length || !selectedRecord || !selectedCareer) return undefined;
     const generation = searchGeneration.current;
     setResourcesBySkill({});
-    const requests = getSkillsToLearn(selectedCareer).flatMap(({ skill }) => (
+    const requests = learningPlans.flatMap(({ skill }) => (
       submittedLanguages.map((language) => ({ skill, language }))
     ));
     let nextRequest = 0;
@@ -489,7 +550,7 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
     }
     void Promise.all(Array.from({ length: workerCount }, () => runWorker()));
     return () => { searchGeneration.current += 1; };
-  }, [submittedLanguages, selectedRecord?.id, selectedCareerPath, user?.uid]);
+  }, [submittedLanguages, selectedRecord?.id, selectedCareerPath, user?.uid, learningPlans]);
 
   useEffect(() => {
     if (!focusedSkillMode || !submittedLanguages?.length || !canUseProfile(user)) return undefined;
@@ -513,23 +574,25 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
     setSavingSkill(skill);
     setProgressError('');
     const careerPath = selectedCareer?.careerPath;
-    if (!careerPath || !selectedCareer.missingSkills?.includes(skill)) {
+    if (!careerPath || !learningPlans.some((plan) => getSkillKey(plan.skill) === getSkillKey(skill))) {
       setSavingSkill('');
-      setProgressError('This skill is not part of the selected saved career. Select the recommendation again.');
+      setProgressError('This skill is not part of the selected career path. Select the recommendation again.');
       return;
     }
 
+    const savedSkill = [...completedSkills].find((item) => getSkillKey(item) === getSkillKey(skill));
+    const isCompleted = Boolean(savedSkill);
     const progressRef = doc(
       firestore,
       'users',
       user.uid,
       'skillProgress',
-      getCareerProgressDocumentId(careerPath, skill),
+      getCareerProgressDocumentId(careerPath, isCompleted ? savedSkill : skill),
     );
     try {
-      if (completedSkills.has(skill)) {
+      if (isCompleted) {
         await deleteDoc(progressRef);
-        setCompletedSkills((current) => new Set([...current].filter((item) => item !== skill)));
+        setCompletedSkills((current) => new Set([...current].filter((item) => item !== savedSkill)));
       } else {
         await setDoc(progressRef, {
           careerPath,
@@ -544,6 +607,69 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
     } finally {
       setSavingSkill('');
     }
+  }
+
+  function renderLearningSkill(plan) {
+    const skill = plan.skill;
+    const gap = skillGapsByKey.get(getSkillKey(skill));
+    const savedSkill = [...completedSkills].find((item) => getSkillKey(item) === getSkillKey(skill));
+    const completed = Boolean(savedSkill);
+    const demonstrated = gap?.status === 'demonstrated';
+    const priority = typeof plan.priority === 'string' ? plan.priority : '';
+    return (
+      <article
+        className={`skill-resource${completed ? ' skill-resource--completed' : ''}`}
+        id={`learning-skill-${encodeURIComponent(`${selectedCareer?.careerPath}::${skill}`)}`}
+        key={skill}
+        tabIndex={-1}
+      >
+        <header className="skill-resource-heading">
+          <div>
+            <span className="skill-sequence-number">{plan.sequenceOrder}</span>
+            <div className="skill-resource-labels">
+              <div className="skill-resource-title-line">
+                <h4>{skill}</h4>
+                <span
+                  className={`skill-completion-status${completed ? ' skill-completion-status--done' : ''}`}
+                  role="status"
+                  aria-live="polite"
+                >
+                  <span className="visually-hidden">Learning progress: </span>
+                  {completed ? 'Completed' : 'In progress'}
+                </span>
+                <span className={`skill-evidence-status${demonstrated ? ' skill-evidence-status--demonstrated' : ''}`}>
+                  {demonstrated ? 'Demonstrated' : 'Unverified'}
+                </span>
+              </div>
+              {priority
+                ? <span className={`skill-priority skill-priority--${priority.toLowerCase()}`}>{priority} priority</span>
+                : <span className="skill-gap-muted">Priority unavailable in this saved result</span>}
+            </div>
+          </div>
+          <button
+            className={`button ${completed ? 'button-secondary' : 'button-primary'}`}
+            type="button"
+            onClick={() => toggleCompleted(skill)}
+            disabled={savingSkill === skill || progressLoading}
+          >
+            {savingSkill === skill ? 'Saving...' : completed ? 'Mark as not completed' : 'Mark as completed'}
+          </button>
+        </header>
+        {demonstrated ? (
+          <p className="skill-evidence-explanation">{gap.evidence.map(({ description }) => description).join(' ')}</p>
+        ) : (
+          <p className="skill-evidence-explanation">
+            No matching evidence was found in the current saved profile skills, projects, or certifications. This does not mean you lack this skill.
+          </p>
+        )}
+        <SkillLanguageResults
+          skill={skill}
+          languages={submittedLanguages}
+          resourcesBySkill={visibleResourcesBySkill}
+          loadResources={loadResources}
+        />
+      </article>
+    );
   }
 
   return (
@@ -735,10 +861,6 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
 
           {selectedRecord && (() => {
             const career = careers.find((item) => item.careerPath === selectedCareerPath) || careers[0];
-            const skillPlan = Array.isArray(career?.skillLearningPlan)
-              ? [...career.skillLearningPlan].sort((first, second) => first.sequenceOrder - second.sequenceOrder)
-              : [];
-            const skillsToLearn = getSkillsToLearn(career);
 
             return (
               <>
@@ -751,62 +873,71 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
 
                   <div className="skill-gap-columns">
                     <section className="skill-gap-existing">
-                      <h3>Skills you already have</h3>
-                      {career?.relevantSkills?.length ? (
-                        <ul className="recommendation-tags">{career.relevantSkills.map((skill) => <li key={skill}>{skill}</li>)}</ul>
-                      ) : <p className="skill-gap-muted">No direct matching skills were listed for this path.</p>}
+                      <h3>Demonstrated skills</h3>
+                      {skillGapAnalysis.demonstratedSkills.length ? (
+                        <ul className="skill-gap-evidence-list">
+                          {skillGapAnalysis.demonstratedSkills.map((item) => (
+                            <li key={item.skill}>
+                              <strong>{item.skill}</strong>
+                              <span>{item.evidence.map(({ description }) => description).join(' ')}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="skill-gap-muted">
+                          No matching skill evidence was found in the current saved profile. Unverified does not mean you lack a skill.
+                        </p>
+                      )}
                     </section>
                     <section className="skill-gap-sequence">
                       <h3>Recommended learning sequence</h3>
-                      {!skillPlan.length ? (
-                        <p className="skill-gap-muted">This saved result has no per-skill sequence. Generate a fresh recommendation to create a detailed plan.</p>
+                      {!learningPlans.length ? (
+                        <p className="skill-gap-muted">No target skills are available for this saved career path.</p>
                       ) : (
                         <ol>
-                          {skillPlan.map((item) => (
+                          {learningPlans.map((item) => (
                             <li key={item.skill}>
                               <span className="skill-sequence-number">{item.sequenceOrder}</span>
                               <span>{item.skill}</span>
-                              <span className={`skill-priority skill-priority--${item.priority.toLowerCase()}`}>{item.priority}</span>
+                              {item.priority && <span className={`skill-priority skill-priority--${item.priority.toLowerCase()}`}>{item.priority}</span>}
                             </li>
                           ))}
                         </ol>
                       )}
+                      <p className="skill-gap-muted skill-gap-priority-note">
+                        Sequence and Beginner/Intermediate/Advanced labels describe a recommended learning order, not measured proficiency.
+                      </p>
                     </section>
                   </div>
 
                   <section className="skill-gap-resources">
                     <div className="skill-gap-section-heading"><div><p className="eyebrow">Practice and track</p><h3>Skills to learn</h3></div>{progressLoading && <span className="skill-gap-muted" role="status">Loading progress...</span>}</div>
                     {progressError && <p className="skill-gap-error" role="alert">{progressError}</p>}
-                    {!career?.missingSkills?.length ? (
-                      <p className="skill-gap-muted">No missing skills were identified for this career path.</p>
+                    {!learningPlans.length ? (
+                      <p className="skill-gap-muted">No target skills are available for this career path.</p>
                     ) : (
-                      <div className="skill-resource-list">
-                        {skillsToLearn.map((plan) => {
-                          const skill = plan.skill;
-                          const completed = completedSkills.has(skill);
-                          return (
-                            <article
-                              className={`skill-resource${completed ? ' skill-resource--completed' : ''}`}
-                              id={`learning-skill-${encodeURIComponent(`${career.careerPath}::${skill}`)}`}
-                              key={skill}
-                              tabIndex={-1}
-                            >
-                              <header className="skill-resource-heading">
-                                <div><span className="skill-sequence-number">{plan.sequenceOrder}</span><div className="skill-resource-labels"><div className="skill-resource-title-line"><h4>{skill}</h4><span className={`skill-completion-status${completed ? ' skill-completion-status--done' : ''}`}>{completed ? 'Completed' : 'In progress'}</span></div>{plan.priority ? <span className={`skill-priority skill-priority--${plan.priority.toLowerCase()}`}>{plan.priority} priority</span> : <span className="skill-gap-muted">Priority unavailable in this saved result</span>}</div></div>
-                                <button className={`button ${completed ? 'button-secondary' : 'button-primary'}`} type="button" onClick={() => toggleCompleted(skill)} disabled={savingSkill === skill || progressLoading}>
-                                  {savingSkill === skill ? 'Saving...' : completed ? 'Completed' : 'Mark as completed'}
-                                </button>
-                              </header>
-                              <SkillLanguageResults
-                                skill={skill}
-                                languages={submittedLanguages}
-                                resourcesBySkill={visibleResourcesBySkill}
-                                loadResources={loadResources}
-                              />
-                            </article>
-                          );
-                        })}
-                      </div>
+                      <>
+                        <section aria-labelledby="unverified-skills-title">
+                          <h4 id="unverified-skills-title">Unverified skills</h4>
+                          {skillGapAnalysis.unverifiedSkills.length ? (
+                            <div className="skill-resource-list">
+                              {skillGapAnalysis.unverifiedSkills.map((item) => renderLearningSkill(item))}
+                            </div>
+                          ) : (
+                            <p className="skill-gap-muted">Every target skill has matching evidence in the current profile.</p>
+                          )}
+                        </section>
+                        <section className="skill-gap-demonstrated-resources" aria-labelledby="demonstrated-skills-title">
+                          <h4 id="demonstrated-skills-title">Demonstrated skills</h4>
+                          {skillGapAnalysis.demonstratedSkills.length ? (
+                            <div className="skill-resource-list">
+                              {skillGapAnalysis.demonstratedSkills.map((item) => renderLearningSkill(item))}
+                            </div>
+                          ) : (
+                            <p className="skill-gap-muted">No demonstrated skills in this pathway yet.</p>
+                          )}
+                        </section>
+                      </>
                     )}
                   </section>
                 </section>

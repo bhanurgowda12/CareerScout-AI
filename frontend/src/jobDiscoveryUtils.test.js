@@ -9,6 +9,7 @@ import {
   deduplicateDiscoveryListings,
   EXPERIENCE_FILTERS,
   extractJobRequirements,
+  extractJobRequirementEvidence,
   filterAndSortDiscoveryListings,
   filterDiscoveryListings,
   formatDiscoveryDate,
@@ -246,6 +247,78 @@ test('filters, deduplicates, groups and sorts only returned provider listings', 
   ]).length, 1);
   assert.deepEqual(Object.keys(groupListingsByCompany([listing, second])), ['Example Co', 'Another Co']);
   assert.deepEqual(filterAndSortDiscoveryListings([], {}), []);
+});
+
+test('sorts best matches descending, keeps ties and insufficient evidence in provider order, after filtering', () => {
+  const second = {
+    ...listing,
+    id: '456',
+    title: 'Python Analyst',
+    company: 'Another Co',
+    url: 'https://remotive.com/remote-jobs/python-analyst-456',
+  };
+  const third = {
+    ...listing,
+    id: '789',
+    title: 'Frontend Engineer',
+    company: 'Third Co',
+    url: 'https://remotive.com/remote-jobs/frontend-engineer-789',
+  };
+  const excluded = {
+    ...listing,
+    id: 'excluded',
+    title: 'Designer',
+    url: 'https://remotive.com/remote-jobs/designer',
+  };
+  const scores = new Map([
+    ['123', { score: 75 }],
+    ['456', { score: 90 }],
+    ['789', { score: 90 }],
+    ['excluded', { score: 100 }],
+  ]);
+  assert.deepEqual(
+    filterAndSortDiscoveryListings([listing, second, third, excluded], {
+      query: 'engineer',
+      sortBy: 'bestMatch',
+      matchResults: scores,
+    }).map((job) => job.id),
+    ['789', '123'],
+  );
+  assert.deepEqual(
+    filterAndSortDiscoveryListings([listing, second, third], {
+      sortBy: 'bestMatch',
+      matchResults: new Map([
+        ['123', { score: null }],
+        ['456', { score: 90 }],
+        ['789', { score: 90 }],
+      ]),
+    }).map((job) => job.id),
+    ['456', '789', '123'],
+  );
+});
+
+test('keeps existing provider, newest, company and title sort modes intact', () => {
+  const older = {
+    ...listing,
+    id: 'older',
+    title: 'Zebra Developer',
+    company: 'Zebra Co',
+    publicationDate: '2024-01-01T00:00:00Z',
+    url: 'https://remotive.com/remote-jobs/older',
+  };
+  const newer = {
+    ...listing,
+    id: 'newer',
+    title: 'Analyst',
+    company: 'Alpha Co',
+    publicationDate: '2025-01-01T00:00:00Z',
+    url: 'https://remotive.com/remote-jobs/newer',
+  };
+  const listings = [older, newer];
+  assert.deepEqual(filterAndSortDiscoveryListings(listings, { sortBy: 'relevance' }), listings);
+  assert.deepEqual(filterAndSortDiscoveryListings(listings, { sortBy: 'newest' }).map((job) => job.id), ['newer', 'older']);
+  assert.deepEqual(filterAndSortDiscoveryListings(listings, { sortBy: 'company' }).map((job) => job.id), ['newer', 'older']);
+  assert.deepEqual(filterAndSortDiscoveryListings(listings, { sortBy: 'title' }).map((job) => job.id), ['newer', 'older']);
 });
 
 test('filters supported employment and experience terms without inventing missing metadata', () => {
@@ -505,21 +578,475 @@ test('filters city matches honestly and keeps global/unspecified remote listings
   ], { location: 'Bengaluru' }).map((job) => job.id), ['123', 'global', 'remote-unknown']);
 });
 
-test('normalizes actual provider skill tags and compares profile evidence without claiming absent skills are lacking', () => {
+test('preserves skill provenance and scores only explicit mandatory description requirements', () => {
   const job = {
     ...listing,
     skills: ['React', 'Docker'],
-    description: 'Experience using JavaScript and React. Familiarity with Python is helpful.',
+    description: 'Required: React and JavaScript. Docker is required. Familiarity with Python is helpful.',
   };
   assert.deepEqual(extractJobRequirements(job), ['React', 'Docker', 'JavaScript', 'Python']);
+  const evidence = extractJobRequirementEvidence(job);
+  assert.equal(evidence.find((item) => item.skill === 'React').status, 'required');
+  assert.equal(evidence.find((item) => item.skill === 'Docker').status, 'required');
+  assert.equal(evidence.find((item) => item.skill === 'Python').status, 'optional');
+  assert.ok(evidence.find((item) => item.skill === 'React').source.includes('provider'));
+
   const comparison = compareListingWithProfile(job, {
     skills: ['React'],
     projects: [{ technologies: 'JavaScript' }],
   });
   assert.deepEqual(comparison.matchedSkills, ['React', 'JavaScript']);
-  assert.deepEqual(comparison.needsVerification, ['Docker', 'Python']);
-  assert.equal(comparison.score, 50);
-  assert.equal(compareListingWithProfile({ ...job, skills: [], description: '' }, {}).score, null);
+  assert.deepEqual(comparison.needsVerification, ['Docker']);
+  assert.equal(comparison.dimensions[0].score, 2 / 3);
+  assert.equal(comparison.score, null);
+  assert.equal(comparison.requirements.find((item) => item.skill === 'Docker').status, 'unmatched');
+  assert.equal(comparison.requirements.find((item) => item.skill === 'Python').mandatory, false);
+
+  const noEvidence = compareListingWithProfile({ ...job, skills: [], description: '' }, {});
+  assert.equal(noEvidence.score, null);
+  assert.equal(noEvidence.requirements.length, 0);
+  assert.ok(noEvidence.unknownInformation.length);
+});
+
+test('does not make provider tags, optional skills, or negated skills mandatory', () => {
+  const providerOnly = compareListingWithProfile({
+    ...listing,
+    skills: ['React'],
+    description: '',
+  }, { skills: ['Python'] });
+  assert.equal(providerOnly.dimensions.find((item) => item.id === 'skills').applicable, false);
+  assert.equal(providerOnly.requirements[0].status, 'provider');
+
+  const optional = extractJobRequirementEvidence({
+    description: 'Python is helpful. React is preferred. Knowledge of AWS is a plus. Java is optional. Optional: SQL.',
+  });
+  assert.deepEqual(optional.map((item) => item.status), [
+    'optional', 'optional', 'optional', 'optional', 'optional',
+  ]);
+  const optionalOnlyComparison = compareListingWithProfile({
+    ...listing,
+    skills: [],
+    description: 'Python is optional. Optional: SQL.',
+  }, { skills: ['Python', 'SQL'] });
+  assert.equal(optionalOnlyComparison.dimensions.find((item) => item.id === 'skills').applicable, false);
+  assert.deepEqual(optionalOnlyComparison.matchedSkills, []);
+
+  const negated = extractJobRequirementEvidence({
+    description: 'Python is not required. No previous AWS experience is necessary.',
+  });
+  assert.equal(negated.find((item) => item.skill === 'Python').status, 'negated');
+  assert.equal(negated.find((item) => item.skill === 'AWS').status, 'negated');
+  assert.equal(negated.some((item) => item.status === 'required'), false);
+
+  const required = extractJobRequirementEvidence({
+    description: 'Must have Python experience. Candidates must know SQL.',
+  });
+  assert.equal(required.find((item) => item.skill === 'Python').status, 'required');
+  assert.equal(required.find((item) => item.skill === 'SQL').status, 'required');
+});
+
+test('scores a strong profile and job match using available weighted dimensions', () => {
+  const job = {
+    ...listing,
+    title: 'Frontend Developer',
+    category: 'Software Development',
+    location: 'Bengaluru, India',
+    workMode: 'Remote',
+    employmentType: 'Full-time',
+    skills: ['React', 'JavaScript'],
+    description: "Entry-level role. Bachelor's degree in Computer Science required. Build software development tools with React and JavaScript.",
+  };
+  const profile = {
+    skills: ['React', 'JavaScript'],
+    projects: [{ name: 'Web app', technologies: 'React, JavaScript' }],
+    certifications: [{ name: 'Frontend Foundations', issuer: 'Training provider' }],
+    degree: 'B.Tech',
+    branch: 'Computer Science',
+    experienceLevel: 'Intermediate',
+    interests: ['Software Development'],
+    preferredIndustries: ['Software Development'],
+    preferredWorkAreas: ['Software Development'],
+    preferredLocations: ['Bengaluru'],
+    preferredWorkModes: ['Remote'],
+    preferredEmploymentTypes: ['Full-time'],
+  };
+
+  const comparison = compareListingWithProfile(job, profile);
+  assert.equal(comparison.score, 100);
+  assert.equal(comparison.comparableWeight, 55);
+  assert.equal(comparison.evidenceCoverage, 55);
+  assert.equal(comparison.dimensions.find((dimension) => dimension.id === 'skills').status, 'unknown');
+  assert.match(comparison.scoreExplanation, /Weighted average/);
+});
+
+test('reports partial matches without treating absent profile skills as proven deficiencies', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    title: 'Senior Frontend Engineer',
+    category: 'Software Development',
+    skills: ['React', 'Docker'],
+    experienceLevel: '',
+    description: "Senior role requiring a master's degree in Mathematics. React and Docker are required. Build software development tools.",
+  }, {
+    skills: ['React'],
+    degree: 'B.Tech',
+    branch: 'Computer Science',
+    experienceLevel: 'Beginner',
+    interests: ['Software Development'],
+  });
+
+  assert.equal(comparison.dimensions.find((dimension) => dimension.id === 'skills').score, 0.5);
+  assert.ok(comparison.unmatchedRequirements.some((item) => item.includes('Docker')));
+  assert.ok(comparison.unmatchedRequirements.every((item) => !/lack|does not know/i.test(item)));
+  assert.ok(comparison.score < 100);
+});
+
+test('treats missing profile skill evidence as unknown rather than unmatched', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    skills: ['React', 'Python'],
+    description: 'React and Python are required.',
+  }, {
+    degree: 'B.Tech',
+  });
+
+  assert.deepEqual(comparison.matchedSkills, []);
+  assert.deepEqual(comparison.needsVerification, ['React', 'Python']);
+  assert.deepEqual(comparison.requirements.map((item) => item.status), ['unknown', 'unknown']);
+  assert.equal(comparison.dimensions.find((dimension) => dimension.id === 'skills').applicable, false);
+  assert.equal(comparison.score, null);
+});
+
+test('does not score missing job requirements or an empty job description as mismatches', () => {
+  const profile = {
+    skills: ['React'],
+    interests: ['Software Development'],
+  };
+  const missingRequirements = compareListingWithProfile({
+    ...listing,
+    title: 'Frontend Developer',
+    category: 'Software Development',
+    skills: [],
+    description: '',
+  }, profile);
+
+  assert.equal(missingRequirements.dimensions.find((dimension) => dimension.id === 'skills').status, 'unknown');
+  assert.equal(missingRequirements.dimensions.find((dimension) => dimension.id === 'careerAlignment').status, 'matched');
+  assert.equal(missingRequirements.score, null);
+  assert.equal(missingRequirements.unmatchedRequirements.length, 0);
+});
+
+test('withholds a high score when only two pieces of matching evidence are available', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    category: 'Software Development',
+    skills: ['React'],
+    description: 'React is required.',
+  }, {
+    skills: ['React'],
+    interests: ['Software Development'],
+  });
+
+  assert.equal(comparison.comparableDimensionCount, 2);
+  assert.equal(comparison.comparableEvidenceCount, 2);
+  assert.equal(comparison.comparableWeight, 65);
+  assert.equal(comparison.score, null);
+  assert.match(comparison.scoreExplanation, /3 evidence comparisons/);
+});
+
+test('reports unknown experience when the listing does not state a level', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    description: 'Build software tools.',
+    skills: ['React'],
+  }, {
+    skills: ['React'],
+    experienceLevel: 'Advanced',
+  });
+
+  const dimension = comparison.dimensions.find((item) => item.id === 'experience');
+  assert.equal(dimension.status, 'unknown');
+  assert.ok(dimension.unknownInformation.length);
+});
+
+test('compares explicit education requirements against saved degree and specialization', () => {
+  const job = {
+    ...listing,
+    description: "Bachelor's degree in Computer Science required.",
+    skills: [],
+  };
+  const matching = compareListingWithProfile(job, {
+    degree: 'B.Tech',
+    branch: 'Computer Science',
+  });
+  const mismatching = compareListingWithProfile({
+    ...job,
+    description: "Master's degree required.",
+  }, {
+    degree: 'B.Tech',
+    branch: 'Computer Science',
+  });
+
+  assert.equal(matching.dimensions.find((item) => item.id === 'education').status, 'matched');
+  assert.equal(mismatching.dimensions.find((item) => item.id === 'education').status, 'unmatched');
+  assert.ok(mismatching.unmatchedRequirements.some((item) => item.toLocaleLowerCase().includes('master')));
+});
+
+test('matches education level and field on the same record across multiple qualifications', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    skills: [],
+    description: "Master's degree in Mathematics required.",
+  }, {
+    education: [
+      { degree: "Bachelor's", field: 'Mathematics' },
+      { degree: "Master's", field: 'English' },
+    ],
+  });
+  const education = comparison.dimensions.find((item) => item.id === 'education');
+  assert.equal(education.status, 'unmatched');
+  assert.ok(education.unmatchedRequirements.some((item) => /Mathematics/.test(item)));
+  assert.equal(education.matchedEvidence.length, 0);
+
+  const matching = compareListingWithProfile({
+    ...listing,
+    skills: [],
+    description: "Master's degree in Mathematics required.",
+  }, {
+    education: [
+      { degree: "Bachelor's", field: 'Mathematics' },
+      { degree: "Master's", field: 'Mathematics' },
+    ],
+  });
+  assert.equal(matching.dimensions.find((item) => item.id === 'education').status, 'matched');
+});
+
+test('keeps unspecified education requirements unknown rather than mismatched', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    skills: [],
+    description: 'Build software tools with a collaborative team.',
+  }, {
+    degree: 'High School',
+  });
+  const education = comparison.dimensions.find((item) => item.id === 'education');
+  assert.equal(education.status, 'unknown');
+  assert.equal(education.unmatchedRequirements.length, 0);
+});
+
+test('interprets required experience ranges and ignores preferred-year thresholds', () => {
+  const rangeJob = {
+    ...listing,
+    title: 'Software Developer',
+    skills: [],
+    description: '0–2 years of experience required; 5 years preferred.',
+  };
+  const inRange = compareListingWithProfile(rangeJob, { yearsExperience: 1 });
+  const outOfRange = compareListingWithProfile(rangeJob, { yearsExperience: 3 });
+  assert.equal(inRange.dimensions.find((item) => item.id === 'experience').status, 'matched');
+  assert.equal(outOfRange.dimensions.find((item) => item.id === 'experience').status, 'unmatched');
+
+  const separatedThresholds = compareListingWithProfile({
+    ...rangeJob,
+    description: '2 years required, 4 years preferred.',
+  }, { yearsExperience: 2 });
+  assert.equal(separatedThresholds.dimensions.find((item) => item.id === 'experience').status, 'matched');
+  assert.match(
+    separatedThresholds.dimensions.find((item) => item.id === 'experience').matchedEvidence[0].jobEvidence,
+    /2 years required/i,
+  );
+});
+
+test('preserves decimal experience values while parsing years and ranges', () => {
+  for (const years of [1.5, 2.5, 3.5]) {
+    const comparison = compareListingWithProfile({
+      ...listing,
+      title: 'Software Developer',
+      skills: [],
+      description: `${years} years of experience required.`,
+    }, { yearsExperience: years });
+    const experience = comparison.dimensions.find((item) => item.id === 'experience');
+    assert.equal(experience.status, 'matched', `${years} years should satisfy its stated threshold`);
+    assert.match(experience.matchedEvidence[0].requirement, new RegExp(`${years}\\+ years`));
+  }
+
+  const decimalRange = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    skills: [],
+    description: '1.5–2.5 years of experience required.',
+  }, { yearsExperience: 2.5 });
+  assert.equal(decimalRange.dimensions.find((item) => item.id === 'experience').status, 'matched');
+});
+
+test('ignores unrelated year requirements and accepts role-context experience wording', () => {
+  const warranty = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    skills: [],
+    description: '2 years of warranty required.',
+  }, { yearsExperience: 0, experienceLevel: 'Beginner' });
+  assert.equal(warranty.dimensions.find((item) => item.id === 'experience').status, 'unknown');
+  assert.equal(warranty.dimensions.find((item) => item.id === 'experience').applicable, false);
+
+  const softwareDevelopment = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    skills: [],
+    description: 'At least 2 years in software development required.',
+  }, { yearsExperience: 2 });
+  assert.equal(softwareDevelopment.dimensions.find((item) => item.id === 'experience').status, 'matched');
+
+  const professionalExperience = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    skills: [],
+    description: 'Minimum 3 years of professional experience.',
+  }, { yearsExperience: 3 });
+  assert.equal(professionalExperience.dimensions.find((item) => item.id === 'experience').status, 'matched');
+
+  const structuredExperience = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    skills: [],
+    description: '',
+    experienceMetadata: [{ label: 'Experience', value: '4 years required' }],
+  }, { yearsExperience: 4 });
+  assert.equal(structuredExperience.dimensions.find((item) => item.id === 'experience').status, 'matched');
+});
+
+test('reports preferred and ambiguous experience years without treating them as mandatory', () => {
+  const preferred = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    skills: [],
+    description: '3+ years of experience preferred.',
+  }, { yearsExperience: 0, experienceLevel: 'Beginner' });
+  const preferredDimension = preferred.dimensions.find((item) => item.id === 'experience');
+  assert.equal(preferredDimension.applicable, false);
+  assert.ok(preferredDimension.unknownInformation.some((item) => /preferred years/i.test(item)));
+
+  const ambiguous = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    skills: [],
+    description: '2 years of experience.',
+  }, { yearsExperience: 0, experienceLevel: 'Beginner' });
+  assert.equal(ambiguous.dimensions.find((item) => item.id === 'experience').status, 'unknown');
+
+  const unrelated = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    skills: [],
+    description: 'Our product launched 2 years ago.',
+  }, { yearsExperience: 0, experienceLevel: 'Beginner' });
+  assert.equal(unrelated.dimensions.find((item) => item.id === 'experience').status, 'unknown');
+});
+
+test('reports evidence coverage independently from the normalized match score', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    category: 'Software Development',
+    skills: ['React', 'Python'],
+    description: 'Required: React and Python.',
+  }, {
+    skills: ['React', 'Python'],
+    interests: ['Software Development'],
+  });
+  assert.equal(comparison.score, 100);
+  assert.equal(comparison.evidenceCoverage, 65);
+  assert.equal(comparison.comparableWeight, 65);
+
+  const uiSource = readFileSync(new URL('./JobDiscovery.jsx', import.meta.url), 'utf8');
+  assert.match(uiSource, /<strong>Match score:<\/strong>/);
+  assert.match(uiSource, /<strong>Evidence coverage:<\/strong>/);
+  assert.match(uiSource, /<dt>Match score<\/dt>/);
+  assert.match(uiSource, /<dt>Evidence coverage<\/dt>/);
+  assert.match(uiSource, /aria-expanded=\{comparisonJob === jobKey\}/);
+  assert.match(uiSource, /aria-controls=\{`job-discovery-compare-/);
+  assert.match(uiSource, /comparison\.score === null \? 'Insufficient evidence'/);
+  assert.match(uiSource, /compareListingWithProfile\(job, profile \|\| \{\}\)/);
+  assert.match(uiSource, /\}, \[jobs, profile, profileReady\]\)/);
+  assert.match(uiSource, /Recommended from these results/);
+  assert.match(uiSource, /matchResults\.get\(String\(job\.id \|\| job\.url\)\)/);
+  assert.match(uiSource, /onSnapshot\(doc\(firestore, 'users', uid, 'profile', 'profile'\)/);
+  assert.match(uiSource, /return unsubscribe;/);
+  assert.doesNotMatch(uiSource, /getDoc\(/);
+  const scoreCacheSource = uiSource.slice(
+    uiSource.indexOf('const matchResults = useMemo'),
+    uiSource.indexOf('const visibleJobs = useMemo'),
+  );
+  assert.doesNotMatch(scoreCacheSource, /Gemini|fetch\(/i);
+});
+
+test('detects work-mode and employment preferences that differ from the listing', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    workMode: 'On-site',
+    isRemote: false,
+    employmentType: 'Internship',
+    skills: [],
+    description: '',
+  }, {
+    preferredWorkModes: ['Remote'],
+    preferredEmploymentTypes: ['Full-time'],
+  });
+
+  assert.equal(comparison.dimensions.find((item) => item.id === 'workMode').status, 'unmatched');
+  assert.equal(comparison.dimensions.find((item) => item.id === 'employmentType').status, 'unmatched');
+});
+
+test('treats a source-confirmed worldwide remote job as compatible with a preferred location', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    location: 'Worldwide',
+    isRemote: true,
+    skills: [],
+    description: '',
+  }, {
+    preferredLocations: ['Bengaluru'],
+  });
+
+  assert.equal(comparison.dimensions.find((item) => item.id === 'location').status, 'matched');
+  assert.match(
+    comparison.dimensions.find((item) => item.id === 'location').matchedEvidence[0].jobEvidence,
+    /worldwide remote/i,
+  );
+});
+
+test('withholds a score for an empty profile and reports unavailable profile evidence', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    skills: ['React'],
+    description: "Entry-level role. Bachelor's degree required. React is required.",
+  }, {});
+
+  assert.equal(comparison.score, null);
+  assert.ok(comparison.dimensions.every((dimension) => (
+    dimension.status === 'unknown' || dimension.status === 'unmatched'
+  )));
+  assert.ok(comparison.unknownInformation.some((item) => /profile skills/i.test(item)));
+  assert.match(comparison.scoreExplanation, /withheld/i);
+});
+
+test('keeps contradictory experience signals unknown', () => {
+  const comparison = compareListingWithProfile({
+    ...listing,
+    title: 'Software Developer',
+    experienceLevel: 'Entry-level, Experienced',
+    description: 'Build software tools.',
+    skills: ['React'],
+  }, {
+    skills: ['React'],
+    experienceLevel: 'Advanced',
+  });
+
+  const dimension = comparison.dimensions.find((item) => item.id === 'experience');
+  assert.equal(dimension.status, 'unknown');
+  assert.match(dimension.unknownInformation.join(' '), /conflicting|ambiguous/i);
 });
 
 test('creates role-specific, time-bounded roadmaps with measurable milestones and completion state', () => {
@@ -533,4 +1060,11 @@ test('creates role-specific, time-bounded roadmaps with measurable milestones an
   assert.ok(roadmap.tasks.some((task) => task.skill === 'Unity'));
   assert.ok(roadmap.tasks.every((task) => typeof task.milestone === 'string' && task.milestone.length > 0));
   assert.equal(roadmap.tasks[0].completed, false);
+
+  const documentedSkillRoadmap = createJobPreparationRoadmap({
+    ...listing,
+    skills: ['React'],
+    description: '',
+  }, { skills: ['React'] }, 2);
+  assert.equal(documentedSkillRoadmap.tasks[0].title, 'Strengthen React');
 });

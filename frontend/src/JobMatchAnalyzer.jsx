@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useReducer, useRef, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, firestore } from './firebase.js';
 import {
@@ -7,8 +7,13 @@ import {
   MAX_JOB_DESCRIPTION_LENGTH,
 } from './jobMatchAi.js';
 import { compareJobRequirements, validateJobMatchResult } from './jobMatchUtils.js';
-
-const MAX_RESUME_TEXT_LENGTH = 12000;
+import {
+  EMPTY_RESUME_UPLOAD_STATE,
+  extractResumeText,
+  MAX_RESUME_FILE_SIZE,
+  MAX_RESUME_TEXT_LENGTH,
+  resumeUploadReducer,
+} from './resumeFileParser.js';
 
 function canUseProfile(user) {
   return Boolean(user?.uid && (
@@ -68,13 +73,18 @@ export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobD
   const [jobDescription, setJobDescription] = useState(() => (
     typeof initialJobDescription === 'string' ? initialJobDescription : ''
   ));
-  const [resumeText, setResumeText] = useState('');
+  const [resumeUpload, dispatchResumeUpload] = useReducer(
+    resumeUploadReducer,
+    EMPTY_RESUME_UPLOAD_STATE,
+  );
   const [formError, setFormError] = useState('');
   const [analysisError, setAnalysisError] = useState('');
   const [analysisProgress, setAnalysisProgress] = useState('');
   const [result, setResult] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const requestGate = useRef(null);
+  const resumeParseRequest = useRef(0);
+  const resumeParseController = useRef(null);
   if (!requestGate.current) requestGate.current = createJobMatchRequestGate();
   const currentUid = user?.uid || '';
   const previousUid = useRef(currentUid);
@@ -90,7 +100,10 @@ export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobD
     setAnalyzing(false);
     if (previousUid.current !== uid) {
       setJobDescription('');
-      setResumeText('');
+      resumeParseRequest.current += 1;
+      resumeParseController.current?.abort();
+      resumeParseController.current = null;
+      dispatchResumeUpload({ type: 'remove' });
       previousUid.current = uid;
     }
     setProfile(null);
@@ -134,11 +147,57 @@ export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobD
     };
   }, [user?.uid, verifiedUser, profileLoadAttempt]);
 
+  useEffect(() => () => {
+    resumeParseRequest.current += 1;
+    resumeParseController.current?.abort();
+  }, []);
+
   function clearAnalysisMessages() {
     setResult(null);
     setFormError('');
     setAnalysisError('');
     setAnalysisProgress('');
+  }
+
+  async function handleResumeFileChange(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    const requestId = resumeParseRequest.current + 1;
+    resumeParseRequest.current = requestId;
+    resumeParseController.current?.abort();
+    const controller = new AbortController();
+    resumeParseController.current = controller;
+    dispatchResumeUpload({ type: 'start', fileName: file.name });
+    clearAnalysisMessages();
+    try {
+      const result = await extractResumeText(file, { signal: controller.signal });
+      if (resumeParseRequest.current !== requestId) return;
+      dispatchResumeUpload({
+        type: 'success',
+        fileName: file.name,
+        text: result.text,
+        wasTruncated: result.wasTruncated,
+      });
+    } catch (error) {
+      if (resumeParseRequest.current !== requestId) return;
+      dispatchResumeUpload({
+        type: 'failure',
+        fileName: file.name,
+        error: error?.message || 'The selected resume could not be read. Choose another PDF or DOCX file.',
+      });
+    } finally {
+      if (resumeParseRequest.current === requestId) resumeParseController.current = null;
+    }
+  }
+
+  function removeResumeFile() {
+    resumeParseRequest.current += 1;
+    resumeParseController.current?.abort();
+    resumeParseController.current = null;
+    dispatchResumeUpload({ type: 'remove' });
+    clearAnalysisMessages();
   }
 
   async function analyzeJobMatch(event) {
@@ -156,8 +215,12 @@ export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobD
       setFormError(`Job descriptions must be ${MAX_JOB_DESCRIPTION_LENGTH.toLocaleString()} characters or fewer.`);
       return;
     }
-    if (resumeText.length > MAX_RESUME_TEXT_LENGTH) {
-      setFormError(`Pasted resume text must be ${MAX_RESUME_TEXT_LENGTH.toLocaleString()} characters or fewer.`);
+    if (resumeUpload.isExtracting) {
+      setFormError('Wait for resume text extraction to finish before analyzing.');
+      return;
+    }
+    if (resumeUpload.text.length > MAX_RESUME_TEXT_LENGTH) {
+      setFormError(`Resume text must be ${MAX_RESUME_TEXT_LENGTH.toLocaleString()} characters or fewer.`);
       return;
     }
     if (!profileReady || !verifiedUser || auth?.currentUser?.uid !== currentUid) {
@@ -192,7 +255,7 @@ export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobD
       });
       if (!requestGate.current.isCurrent(generation) || auth?.currentUser?.uid !== uid) return;
       const analysis = validateJobMatchResult(
-        compareJobRequirements(requirements, profileEvidence(profile, resumeText)),
+        compareJobRequirements(requirements, profileEvidence(profile, resumeUpload.text)),
       );
       if (requestGate.current.isCurrent(generation) && auth?.currentUser?.uid === uid) {
         setResult(analysis);
@@ -231,7 +294,7 @@ export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobD
         <div className="job-match-intro">
           <p className="eyebrow"><span className="eyebrow-dot" /> Compare role requirements with your evidence</p>
           <h1 id="job-match-title">AI Job Match <span>Analyzer.</span></h1>
-          <p>Review skills named in a job description against your saved profile and any resume text you choose to paste.</p>
+          <p>Review skills named in a job description against your saved profile and resume text you paste or extract from a file.</p>
         </div>
         {onBack && <button className="button button-secondary job-match-back" type="button" onClick={onBack}>Back to Dashboard</button>}
       </header>
@@ -254,7 +317,7 @@ export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobD
         <>
           {profileMissing && (
             <p className="job-match-notice" role="status">
-              No saved profile was found. You can still analyze evidence from resume text you paste below; nothing you enter here will be saved.
+              No saved profile was found. You can still analyze evidence from resume text you paste or upload below; nothing you enter here will be saved.
             </p>
           )}
           <form className="job-match-form" onSubmit={analyzeJobMatch} noValidate>
@@ -281,24 +344,71 @@ export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobD
               </div>
             </div>
 
-            <div className={`form-field job-match-field${formError && resumeText.length > MAX_RESUME_TEXT_LENGTH ? ' form-field--error' : ''}`}>
+            <div className="form-field job-match-field job-match-resume-upload">
+              <label htmlFor="job-match-resume-file">Upload resume <span>(optional)</span></label>
+              <input
+                id="job-match-resume-file"
+                type="file"
+                accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                aria-describedby="job-match-resume-file-help job-match-resume-file-status job-match-resume-file-error"
+                disabled={analyzing}
+                onChange={handleResumeFileChange}
+              />
+              <div className="job-match-field-meta">
+                <span id="job-match-resume-file-help">
+                  PDF or DOCX only · up to {MAX_RESUME_FILE_SIZE / (1024 * 1024)} MB. Text is extracted in this browser; the file is not uploaded.
+                </span>
+              </div>
+              {resumeUpload.fileName && (
+                <div className="job-match-resume-file-details">
+                  <span className="job-match-resume-filename">Selected: {resumeUpload.fileName}</span>
+                  <button
+                    className="small-action"
+                    type="button"
+                    onClick={removeResumeFile}
+                    disabled={analyzing}
+                  >
+                    Remove file
+                  </button>
+                </div>
+              )}
+              {resumeUpload.isExtracting && (
+                <p className="job-match-progress" id="job-match-resume-file-status" role="status" aria-live="polite">
+                  <span className="recommendation-spinner" aria-hidden="true" /> Extracting resume text locally...
+                </p>
+              )}
+              {resumeUpload.fileName && !resumeUpload.isExtracting && !resumeUpload.error && (
+                <p className="job-match-inline-note" id="job-match-resume-file-status" role="status" aria-live="polite">
+                  {resumeUpload.wasTruncated
+                    ? `Text extracted. It exceeded ${MAX_RESUME_TEXT_LENGTH.toLocaleString()} characters and was truncated to fit the matching limit.`
+                    : 'Text extracted and ready for review.'}
+                </p>
+              )}
+              {resumeUpload.error && (
+                <p className="job-match-error" id="job-match-resume-file-error" role="alert">
+                  {resumeUpload.error}
+                </p>
+              )}
+            </div>
+
+            <div className={`form-field job-match-field job-match-resume-text${formError && resumeUpload.text.length > MAX_RESUME_TEXT_LENGTH ? ' form-field--error' : ''}`}>
               <label htmlFor="job-match-resume">Resume text <span>(optional)</span></label>
               <textarea
                 id="job-match-resume"
                 rows="7"
                 maxLength={MAX_RESUME_TEXT_LENGTH}
-                value={resumeText}
-                disabled={analyzing}
+                value={resumeUpload.text}
+                disabled={analyzing || resumeUpload.isExtracting}
                 aria-describedby="job-match-resume-help job-match-resume-count"
                 onChange={(event) => {
-                  setResumeText(event.target.value);
+                  dispatchResumeUpload({ type: 'edit', text: event.target.value });
                   clearAnalysisMessages();
                 }}
               />
               <div className="job-match-field-meta">
-                <span id="job-match-resume-help">Paste text only. It is compared locally in this browser for this session and is not saved or sent to AI.</span>
+                <span id="job-match-resume-help">Paste or review extracted text. It is compared locally in this browser for this session and is not saved or sent to AI. Remove the selected file to clear its text.</span>
                 <span id="job-match-resume-count" aria-live="off">
-                  {resumeText.length.toLocaleString()} / {MAX_RESUME_TEXT_LENGTH.toLocaleString()}
+                  {resumeUpload.text.length.toLocaleString()} / {MAX_RESUME_TEXT_LENGTH.toLocaleString()}
                 </span>
               </div>
             </div>
@@ -309,10 +419,10 @@ export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobD
               <button
                 className="button button-primary"
                 type="submit"
-                disabled={analyzing || !profileReady || !verifiedUser}
+                disabled={analyzing || resumeUpload.isExtracting || !profileReady || !verifiedUser}
                 aria-busy={analyzing}
               >
-                {analyzing ? 'Analyzing...' : 'Analyze Job Match'}
+                {analyzing ? 'Analyzing...' : resumeUpload.isExtracting ? 'Extracting resume...' : 'Analyze Job Match'}
               </button>
               {analyzing && <span className="job-match-progress" role="status"><span className="recommendation-spinner" aria-hidden="true" /> {analysisProgress || 'Extracting job requirements...'}</span>}
             </div>

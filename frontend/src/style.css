@@ -648,6 +648,13 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .skill-gap-columns { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
 .skill-gap-columns h3, .skill-gap-section-heading h3 { margin: 0 0 13px; font: 700 15px 'Manrope', sans-serif; }
 .skill-gap-muted { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.skill-gap-evidence-list { margin: 0; padding: 0; display: grid; gap: 12px; list-style: none; }
+.skill-gap-evidence-list li { display: grid; gap: 4px; color: var(--ink); font-size: 11px; line-height: 1.55; }
+.skill-gap-evidence-list li strong { font: 700 12px 'Manrope', sans-serif; }
+.skill-gap-evidence-list li span, .skill-evidence-explanation { color: var(--muted); }
+.skill-gap-priority-note { margin-top: 12px; }
+.skill-gap-demonstrated-resources { margin-top: 24px; }
+.skill-gap-resources section > h4 { margin: 0 0 12px; color: var(--ink); font: 700 13px 'Manrope', sans-serif; }
 .skill-gap-sequence ol { margin: 0; padding: 0; display: grid; gap: 8px; list-style: none; }
 .skill-gap-sequence li { min-width: 0; display: grid; grid-template-columns: 25px minmax(0, 1fr) auto; align-items: center; gap: 9px; color: #47534a; font-size: 11px; }
 .skill-sequence-number { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; border-radius: 50%; background: #e9eddf; color: var(--green); font-size: 10px; font-weight: 700; }
@@ -669,6 +676,9 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .skill-resource-heading h4 { margin: 0; color: var(--ink); font: 700 16px 'Manrope', sans-serif; overflow-wrap: anywhere; }
 .skill-completion-status { padding: 4px 7px; border: 1px solid #eadfbe; border-radius: 999px; background: #fbf6e9; color: #715b27; font-size: 9px; font-weight: 700; }
 .skill-completion-status--done { border-color: #c6d9c3; background: #edf5eb; color: #315f3b; }
+.skill-evidence-status { padding: 4px 7px; border: 1px solid #eadfbe; border-radius: 999px; background: #fbf6e9; color: #715b27; font-size: 9px; font-weight: 700; }
+.skill-evidence-status--demonstrated { border-color: #c6d9c3; background: #edf5eb; color: #315f3b; }
+.skill-evidence-explanation { margin: 13px 0 0; font-size: 11px; line-height: 1.6; }
 .skill-resource-heading .button { min-height: 38px; flex: 0 0 auto; border: 0; cursor: pointer; font-size: 10px; }
 .skill-resource-heading .button-secondary { background: #fff; border: 1px solid #cbd2c9; }
 .skill-resource-heading button:disabled { cursor: wait; opacity: 0.65; }
@@ -878,6 +888,14 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .job-discovery-result-tools .form-field > span { color: var(--ink-subtle); font-size: 10px; font-weight: 700; }
 .job-discovery-result-tools input,
 .job-discovery-result-tools select { min-width: 0; width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); color: var(--ink); }
+.job-discovery-recommendations { margin: 0 0 18px; padding: 15px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-tint); }
+.job-discovery-recommendations h3 { margin: 0 0 5px; color: var(--ink); font: 700 16px 'Manrope', sans-serif; }
+.job-discovery-recommendations > div > p:last-child,
+.job-discovery-recommendations > p { margin: 5px 0 0; color: var(--ink-subtle); font-size: 11px; line-height: 1.6; }
+.job-discovery-recommendations .eyebrow { margin: 0 0 4px; }
+.job-discovery-recommendations ol { margin: 12px 0 0; padding-left: 22px; display: grid; gap: 8px; }
+.job-discovery-recommendations li { padding-left: 3px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 16px; color: var(--ink-subtle); font-size: 11px; }
+.job-discovery-recommendations li a { color: var(--green); font-weight: 700; }
 .job-discovery-group-toggle { min-height: 41px; display: inline-flex; align-items: center; gap: 8px; color: var(--ink-subtle); font-size: 10px; }
 .job-discovery-company-group + .job-discovery-company-group { margin-top: 18px; }
 .job-discovery-location-group { margin-top: 18px; }
@@ -900,6 +918,10 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .job-discovery-card-title { min-width: 0; }
 .job-discovery-card-title p { margin: 0 0 4px; color: var(--accent-text); font-size: 11px; font-weight: 700; }
 .job-discovery-card-title h3 { margin: 0; color: var(--ink); font: 700 17px/1.35 'Manrope', sans-serif; overflow-wrap: anywhere; }
+.job-discovery-card .job-discovery-match-summary { margin: 12px 0 0; gap: 6px 18px; border-left: 3px solid var(--green); background: var(--surface-tint); }
+.job-discovery-card .job-discovery-match-summary dt,
+.job-discovery-card .job-discovery-match-summary dd { color: var(--ink-subtle); font-size: 11px; }
+.job-discovery-card .job-discovery-match-summary dt { font-weight: 700; }
 .job-discovery-badge, .job-discovery-category { flex: 0 0 auto; padding: 5px 8px; border: 1px solid #d5ded2; border-radius: 999px; background: #f0f4eb; color: #3e5f44; font-size: 9px; font-weight: 700; }
 .job-discovery-experience-badge { padding: 5px 8px; border: 1px solid #d5ded2; border-radius: 999px; background: #f0f4eb; color: #3e5f44; font-size: 9px; font-weight: 700; text-align: right; }
 .job-discovery-experience-badge--title { border-color: #dfc995; background: #fbf5e8; color: #705b2d; }
@@ -2482,6 +2504,10 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 :root[data-theme="dark"] .skill-priority--advanced { border: 1px solid #754b43; background: #3d2925; color: #f0b7a9; }
 :root[data-theme="dark"] .skill-completion-status { border-color: #6c5c3a; background: #39311f; color: #ead7a7; }
 :root[data-theme="dark"] .skill-completion-status--done { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
+:root[data-theme="dark"] .skill-evidence-status { border-color: #6c5c3a; background: #39311f; color: #ead7a7; }
+:root[data-theme="dark"] .skill-evidence-status--demonstrated { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
+:root[data-theme="dark"] .skill-gap-evidence-list li,
+:root[data-theme="dark"] .skill-gap-resources section > h4 { color: #dce8de; }
 :root[data-theme="dark"] .skill-video-heading h5 { color: #dce8de; }
 :root[data-theme="dark"] .learning-language-badge { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
 :root[data-theme="dark"] .skill-gap-error,
@@ -2510,8 +2536,14 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .job-match-field label { color: var(--ink); font-size: 12px; }
 .job-match-field label span { color: var(--muted); font-weight: 500; }
 .job-match-field textarea { min-height: 150px; padding: 13px 14px; border-color: var(--line); border-radius: var(--radius-sm); background: var(--paper); color: var(--ink); font: 13px/1.6 'DM Sans', sans-serif; }
-.job-match-field:nth-of-type(2) textarea { min-height: 120px; }
+.job-match-resume-text textarea { min-height: 120px; }
 .job-match-field textarea:focus-visible { outline: 3px solid #6c9b75; outline-offset: 2px; box-shadow: var(--focus-ring); }
+.job-match-resume-upload input[type="file"] { width: 100%; padding: 11px; border: 1px dashed var(--line); border-radius: var(--radius-sm); background: var(--paper); color: var(--ink); font: 11px 'DM Sans', sans-serif; }
+.job-match-resume-upload input[type="file"]:focus-visible { outline: 3px solid #6c9b75; outline-offset: 2px; box-shadow: var(--focus-ring); }
+.job-match-resume-file-details { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+.job-match-resume-filename { min-width: 0; color: var(--ink-subtle); font-size: 11px; overflow-wrap: anywhere; }
+.job-match-resume-upload .job-match-progress { margin: 0; }
+.job-match-resume-upload .job-match-inline-note { margin: 0; }
 .job-match-field-meta { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .job-match-field-meta span:first-child { max-width: 620px; }
 .job-match-field-meta span:last-child { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
@@ -2548,6 +2580,7 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .job-match-learn { min-height: 31px; padding: 4px 8px; color: var(--green); font-size: 10px; }
 .job-match-limitations { margin-top: 21px; padding-top: 15px; border-top: 1px solid var(--line); }
 :root[data-theme="dark"] .job-match-field textarea { border-color: var(--line); background: #19221c; color: var(--ink); }
+:root[data-theme="dark"] .job-match-resume-upload input[type="file"] { border-color: var(--line); background: #19221c; color: var(--ink); }
 :root[data-theme="dark"] .job-match-error { border-color: #a85b4d; background: #3b2824; color: #f0b7a9; }
 :root[data-theme="dark"] .job-match-state,
 :root[data-theme="dark"] .job-match-form,
@@ -2564,6 +2597,7 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
   .job-match-back { align-self: flex-start; }
   .job-match-form, .job-match-results { padding: 17px; }
   .job-match-field-meta { flex-direction: column; gap: 4px; }
+  .job-match-resume-file-details { align-items: flex-start; flex-direction: column; }
   .job-match-skill-groups { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .job-match-metrics { grid-template-columns: minmax(0, 1fr); }
   .job-match-results-header h2 { font-size: 20px; }
