@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, firestore } from './firebase.js';
 import {
   createExternalJobSearchLinks,
@@ -73,64 +73,70 @@ export function JobDiscovery({
   const [sources, setSources] = useState([]);
   const [providerStatuses, setProviderStatuses] = useState([]);
   const [providerErrors, setProviderErrors] = useState([]);
+  const [profile, setProfile] = useState(null);
+  const [profileOwnerUid, setProfileOwnerUid] = useState('');
+  const [profileState, setProfileState] = useState('loading');
+  const [profileError, setProfileError] = useState('');
   const [companyProfile, setCompanyProfile] = useState(null);
   const [companyStatus, setCompanyStatus] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [validationError, setValidationError] = useState('');
-  const [profile, setProfile] = useState(null);
-  const [profileState, setProfileState] = useState('loading');
-  const [profileError, setProfileError] = useState('');
   const [comparisonJob, setComparisonJob] = useState('');
   const [roadmapJob, setRoadmapJob] = useState('');
   const [roadmapWeeks, setRoadmapWeeks] = useState(4);
   const [completedTasks, setCompletedTasks] = useState({});
   const requestGeneration = useRef(0);
   const activeRequest = useRef(null);
+  const listingQuery = query.trim();
+  const activeRole = isUnrestrictedJobRole(role) ? '' : role;
 
+  const isVerifiedUser = verifiedUser(user);
+  const profileReady = profileState === 'ready'
+    && profileOwnerUid === user?.uid
+    && isVerifiedUser
+    && auth?.currentUser?.uid === user?.uid;
+  const profileLoading = profileState === 'loading' || (profileState === 'ready' && !profileReady);
   useEffect(() => {
-    let cancelled = false;
     const uid = user?.uid || '';
     setProfile(null);
+    setProfileOwnerUid('');
     setProfileError('');
     setProfileState('loading');
 
-    if (!firestore || !verifiedUser(user) || !uid || auth?.currentUser?.uid !== uid) {
+    if (!firestore || !isVerifiedUser || !uid || auth?.currentUser?.uid !== uid) {
       setProfileState('unavailable');
       setProfileError('Your saved profile is unavailable for comparison. Sign in with your verified account and try again.');
-      return () => { cancelled = true; };
+      return undefined;
     }
 
-    getDoc(doc(firestore, 'users', uid, 'profile', 'profile'))
-      .then((snapshot) => {
-        if (cancelled || auth?.currentUser?.uid !== uid) return;
-        setProfile(snapshot.exists() ? snapshot.data() : {});
-        setProfileState('ready');
-      })
-      .catch(() => {
-        if (!cancelled && auth?.currentUser?.uid === uid) {
-          setProfileState('error');
-          setProfileError('Your saved profile could not be loaded. Job results are still available, but comparison and personalized roadmaps are disabled.');
-        }
-      });
-    return () => { cancelled = true; };
-  }, [user?.uid, user?.emailVerified]);
+    const unsubscribe = onSnapshot(doc(firestore, 'users', uid, 'profile', 'profile'), (snapshot) => {
+      if (auth?.currentUser?.uid !== uid) return;
+      setProfile(snapshot.exists() ? snapshot.data() : {});
+      setProfileOwnerUid(uid);
+      setProfileState('ready');
+      setProfileError('');
+    }, () => {
+      if (auth?.currentUser?.uid === uid) {
+        setProfile(null);
+        setProfileOwnerUid('');
+        setProfileState('error');
+        setProfileError('Your saved profile could not be loaded. Job results are still available, but comparison and personalized roadmaps are disabled.');
+      }
+    });
+    return unsubscribe;
+  }, [user?.uid, user?.emailVerified, isVerifiedUser]);
 
   useEffect(() => () => {
     requestGeneration.current += 1;
     activeRequest.current?.abort();
   }, []);
 
-  const roleOptions = useMemo(() => {
-    const roles = getAllJobRoles();
-    return selectedCategories.length
-      ? roles.filter((item) => selectedCategories.includes(item.categoryId))
-      : roles;
-  }, [selectedCategories]);
+  useEffect(() => {
+    if (!profileReady && sortBy === 'bestMatch') setSortBy('relevance');
+  }, [profileReady, sortBy]);
 
-  const listingQuery = query.trim();
-  const activeRole = isUnrestrictedJobRole(role) ? '' : role;
-  const visibleJobs = useMemo(() => filterAndSortDiscoveryListings(jobs, {
+  const listingFilters = useMemo(() => ({
     query: listingQuery,
     categories: selectedCategories,
     role: activeRole,
@@ -140,8 +146,36 @@ export function JobDiscovery({
     employment,
     company: searchMode === 'company' ? companyQuery : company,
     location,
+  }), [listingQuery, selectedCategories, activeRole, selectedSkills, workMode, experience, employment, company, companyQuery, searchMode, location]);
+  const matchResults = useMemo(() => {
+    if (!profileReady) return new Map();
+    return new Map(jobs.map((job) => [
+      String(job.id || job.url),
+      compareListingWithProfile(job, profile || {}),
+    ]));
+  }, [jobs, profile, profileReady]);
+  const visibleJobs = useMemo(() => filterAndSortDiscoveryListings(jobs, {
+    ...listingFilters,
     sortBy,
-  }), [jobs, listingQuery, selectedCategories, selectedSkills, activeRole, workMode, experience, employment, company, companyQuery, searchMode, location, sortBy]);
+    matchResults,
+  }), [jobs, listingFilters, sortBy, matchResults]);
+  const recommendationJobs = useMemo(() => {
+    if (!profileReady) return [];
+    return filterAndSortDiscoveryListings(jobs, {
+      ...listingFilters,
+      sortBy: 'bestMatch',
+      matchResults,
+    }).filter((job) => matchResults.get(String(job.id || job.url))?.score !== null
+      && matchResults.get(String(job.id || job.url))?.score !== undefined)
+      .slice(0, 5);
+  }, [jobs, listingFilters, matchResults, profileReady]);
+
+  const roleOptions = useMemo(() => {
+    const roles = getAllJobRoles();
+    return selectedCategories.length
+      ? roles.filter((item) => selectedCategories.includes(item.categoryId))
+      : roles;
+  }, [selectedCategories]);
 
   const selectedCategoryText = selectedCategories
     .map((id) => JOB_CATEGORIES.find((categoryItem) => categoryItem.id === id)?.label)
@@ -363,13 +397,11 @@ export function JobDiscovery({
       : `Seniority: ${seniorityLabel} (${experienceDetails.seniority.source === 'provider'
         ? 'source-reported'
         : experienceDetails.seniority.source === 'title' ? 'title-inferred' : 'description-inferred'})`;
-    const comparison = profileState === 'ready' && comparisonJob === (job.id || job.url)
-      ? compareListingWithProfile(job, profile || {})
-      : null;
-    const roadmap = profileState === 'ready' && roadmapJob === (job.id || job.url)
+    const jobKey = String(job.id || job.url);
+    const comparison = profileReady ? matchResults.get(jobKey) : null;
+    const roadmap = profileReady && roadmapJob === (job.id || job.url)
       ? createJobPreparationRoadmap(job, profile || {}, roadmapWeeks)
       : null;
-    const jobKey = job.id || job.url;
     return (
       <li className="job-discovery-card" key={jobKey}>
         <article>
@@ -388,6 +420,24 @@ export function JobDiscovery({
               </span>
             </div>
           </header>
+          <dl className="job-discovery-match-summary">
+            <div>
+              <dt>Match score</dt>
+              <dd>
+                {profileLoading
+                  ? 'Loading profile…'
+                  : profileReady
+                    ? comparison
+                      ? comparison.score === null ? 'Insufficient evidence' : `${comparison.score}%`
+                      : 'Unavailable'
+                    : 'Unavailable — profile not loaded'}
+              </dd>
+            </div>
+            <div>
+              <dt>Evidence coverage</dt>
+              <dd>{profileReady && comparison ? `${comparison.evidenceCoverage}%` : 'Unavailable'}</dd>
+            </div>
+          </dl>
           <dl>
             <div><dt>Location</dt><dd>{job.location || 'Not provided by source'}</dd></div>
             <div><dt>Work mode</dt><dd>{job.workMode || getKnownWorkMode(job) || 'Unknown — not stated by source'}</dd></div>
@@ -410,10 +460,10 @@ export function JobDiscovery({
               Save job in tracker
             </button>
             <button className="small-action" type="button" onClick={() => analyzeListing(job)}>Open AI job analyzer</button>
-            <button className="small-action" type="button" disabled={profileState !== 'ready'} aria-expanded={comparisonJob === jobKey} aria-controls={`job-discovery-compare-${encodeURIComponent(String(jobKey))}`} onClick={() => setComparisonJob(comparisonJob === jobKey ? '' : jobKey)}>Compare with profile</button>
-            <button className="small-action" type="button" disabled={profileState !== 'ready'} onClick={() => setRoadmapJob(roadmapJob === jobKey ? '' : jobKey)}>Prepare for this job</button>
+            <button className="small-action" type="button" disabled={!profileReady} aria-expanded={comparisonJob === jobKey} aria-controls={`job-discovery-compare-${encodeURIComponent(String(jobKey))}`} onClick={() => setComparisonJob(comparisonJob === jobKey ? '' : jobKey)}>Compare with profile</button>
+            <button className="small-action" type="button" disabled={!profileReady} onClick={() => setRoadmapJob(roadmapJob === jobKey ? '' : jobKey)}>Prepare for this job</button>
           </footer>
-          {profileState === 'ready' && (
+          {profileReady && (
             <section
               id={`job-discovery-compare-${encodeURIComponent(String(jobKey))}`}
               className="job-discovery-compare"
@@ -768,7 +818,7 @@ export function JobDiscovery({
         </section>
       )}
       {profileError && <p className="job-discovery-profile-note" role="status">{profileError}</p>}
-      {profileState === 'loading' && <p className="job-discovery-profile-note" role="status">Loading your saved profile for comparison and personalized roadmaps...</p>}
+      {profileLoading && <p className="job-discovery-profile-note" role="status">Loading your saved profile for comparison and personalized roadmaps...</p>}
       {loading && <div className="job-discovery-state" role="status"><span className="recommendation-spinner" aria-hidden="true" /><p>Loading job listings...</p></div>}
       {error && !loading && <div className="job-discovery-state job-discovery-state--error" role="alert"><p>{error}</p><button className="button button-secondary" type="button" onClick={searchJobs}>Try again</button></div>}
 
@@ -831,6 +881,7 @@ export function JobDiscovery({
               <span>Sort by</span>
               <select id="job-discovery-sort" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
                 <option value="relevance">Provider order</option>
+                <option value="bestMatch" disabled={!profileReady}>Best match</option>
                 <option value="newest">Newest</option>
                 <option value="company">Company</option>
                 <option value="title">Job title</option>
@@ -841,6 +892,29 @@ export function JobDiscovery({
               <span>Group by company</span>
             </label>
           </div>
+          <section className="job-discovery-recommendations" aria-labelledby="job-discovery-recommendations-title">
+            <div>
+              <p className="eyebrow">Based on your saved profile</p>
+              <h3 id="job-discovery-recommendations-title">Recommended from these results</h3>
+              <p>Ranked from the current filtered listings returned by the configured sources; this is not a search of every job available.</p>
+            </div>
+            {!profileReady
+              ? <p role="status">Recommendations are unavailable until your saved profile is loaded.</p>
+              : recommendationJobs.length
+                ? <ol>
+                  {recommendationJobs.map((job) => {
+                    const comparison = matchResults.get(String(job.id || job.url));
+                    return (
+                      <li key={job.id || job.url}>
+                        <a href={job.url} target="_blank" rel="noopener noreferrer">{job.title} — {job.company}</a>
+                        <span><strong>Match score:</strong> {comparison.score}%</span>
+                        <span><strong>Evidence coverage:</strong> {comparison.evidenceCoverage}%</span>
+                      </li>
+                    );
+                  })}
+                </ol>
+                : <p>No listings have enough comparable evidence for a ranked recommendation. All filtered listings remain available below.</p>}
+          </section>
           {resultLocationSections.map((locationSection) => {
             const evidenceGroups = !experienceFilterActive
               ? [{ key: 'all', title: '', listings: locationSection.listings }]

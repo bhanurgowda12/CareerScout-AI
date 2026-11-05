@@ -249,6 +249,78 @@ test('filters, deduplicates, groups and sorts only returned provider listings', 
   assert.deepEqual(filterAndSortDiscoveryListings([], {}), []);
 });
 
+test('sorts best matches descending, keeps ties and insufficient evidence in provider order, after filtering', () => {
+  const second = {
+    ...listing,
+    id: '456',
+    title: 'Python Analyst',
+    company: 'Another Co',
+    url: 'https://remotive.com/remote-jobs/python-analyst-456',
+  };
+  const third = {
+    ...listing,
+    id: '789',
+    title: 'Frontend Engineer',
+    company: 'Third Co',
+    url: 'https://remotive.com/remote-jobs/frontend-engineer-789',
+  };
+  const excluded = {
+    ...listing,
+    id: 'excluded',
+    title: 'Designer',
+    url: 'https://remotive.com/remote-jobs/designer',
+  };
+  const scores = new Map([
+    ['123', { score: 75 }],
+    ['456', { score: 90 }],
+    ['789', { score: 90 }],
+    ['excluded', { score: 100 }],
+  ]);
+  assert.deepEqual(
+    filterAndSortDiscoveryListings([listing, second, third, excluded], {
+      query: 'engineer',
+      sortBy: 'bestMatch',
+      matchResults: scores,
+    }).map((job) => job.id),
+    ['789', '123'],
+  );
+  assert.deepEqual(
+    filterAndSortDiscoveryListings([listing, second, third], {
+      sortBy: 'bestMatch',
+      matchResults: new Map([
+        ['123', { score: null }],
+        ['456', { score: 90 }],
+        ['789', { score: 90 }],
+      ]),
+    }).map((job) => job.id),
+    ['456', '789', '123'],
+  );
+});
+
+test('keeps existing provider, newest, company and title sort modes intact', () => {
+  const older = {
+    ...listing,
+    id: 'older',
+    title: 'Zebra Developer',
+    company: 'Zebra Co',
+    publicationDate: '2024-01-01T00:00:00Z',
+    url: 'https://remotive.com/remote-jobs/older',
+  };
+  const newer = {
+    ...listing,
+    id: 'newer',
+    title: 'Analyst',
+    company: 'Alpha Co',
+    publicationDate: '2025-01-01T00:00:00Z',
+    url: 'https://remotive.com/remote-jobs/newer',
+  };
+  const listings = [older, newer];
+  assert.deepEqual(filterAndSortDiscoveryListings(listings, { sortBy: 'relevance' }), listings);
+  assert.deepEqual(filterAndSortDiscoveryListings(listings, { sortBy: 'newest' }).map((job) => job.id), ['newer', 'older']);
+  assert.deepEqual(filterAndSortDiscoveryListings(listings, { sortBy: 'company' }).map((job) => job.id), ['newer', 'older']);
+  assert.deepEqual(filterAndSortDiscoveryListings(listings, { sortBy: 'title' }).map((job) => job.id), ['newer', 'older']);
+});
+
 test('filters supported employment and experience terms without inventing missing metadata', () => {
   const internship = {
     ...listing,
@@ -891,8 +963,23 @@ test('reports evidence coverage independently from the normalized match score', 
   const uiSource = readFileSync(new URL('./JobDiscovery.jsx', import.meta.url), 'utf8');
   assert.match(uiSource, /<strong>Match score:<\/strong>/);
   assert.match(uiSource, /<strong>Evidence coverage:<\/strong>/);
+  assert.match(uiSource, /<dt>Match score<\/dt>/);
+  assert.match(uiSource, /<dt>Evidence coverage<\/dt>/);
   assert.match(uiSource, /aria-expanded=\{comparisonJob === jobKey\}/);
   assert.match(uiSource, /aria-controls=\{`job-discovery-compare-/);
+  assert.match(uiSource, /comparison\.score === null \? 'Insufficient evidence'/);
+  assert.match(uiSource, /compareListingWithProfile\(job, profile \|\| \{\}\)/);
+  assert.match(uiSource, /\}, \[jobs, profile, profileReady\]\)/);
+  assert.match(uiSource, /Recommended from these results/);
+  assert.match(uiSource, /matchResults\.get\(String\(job\.id \|\| job\.url\)\)/);
+  assert.match(uiSource, /onSnapshot\(doc\(firestore, 'users', uid, 'profile', 'profile'\)/);
+  assert.match(uiSource, /return unsubscribe;/);
+  assert.doesNotMatch(uiSource, /getDoc\(/);
+  const scoreCacheSource = uiSource.slice(
+    uiSource.indexOf('const matchResults = useMemo'),
+    uiSource.indexOf('const visibleJobs = useMemo'),
+  );
+  assert.doesNotMatch(scoreCacheSource, /Gemini|fetch\(/i);
 });
 
 test('detects work-mode and employment preferences that differ from the listing', () => {

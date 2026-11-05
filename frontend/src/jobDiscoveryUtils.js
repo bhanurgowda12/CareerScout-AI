@@ -404,6 +404,7 @@ export function filterAndSortDiscoveryListings(listings, filters = {}) {
     employment = 'Any employment',
     sortBy = 'relevance',
     location = '',
+    matchResults = null,
   } = filters;
   const result = deduplicateDiscoveryListings(listings).filter((listing) => {
     if (!filterDiscoveryListings([listing], { query, remoteOnly }).length) return false;
@@ -438,6 +439,22 @@ export function filterAndSortDiscoveryListings(listings, filters = {}) {
     result.sort((first, second) => first.company.localeCompare(second.company));
   } else if (sortBy === 'title') {
     result.sort((first, second) => first.title.localeCompare(second.title));
+  } else if (sortBy === 'bestMatch') {
+    const getScore = (listing) => {
+      const key = String(listing.id || listing.url || '');
+      const comparison = matchResults instanceof Map
+        ? matchResults.get(key)
+        : matchResults?.[key];
+      return Number.isFinite(comparison?.score) ? comparison.score : null;
+    };
+    result.sort((first, second) => {
+      const firstScore = getScore(first);
+      const secondScore = getScore(second);
+      if (firstScore === null && secondScore === null) return 0;
+      if (firstScore === null) return 1;
+      if (secondScore === null) return -1;
+      return secondScore - firstScore;
+    });
   }
   return result;
 }

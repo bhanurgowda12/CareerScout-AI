@@ -878,6 +878,14 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .job-discovery-result-tools .form-field > span { color: var(--ink-subtle); font-size: 10px; font-weight: 700; }
 .job-discovery-result-tools input,
 .job-discovery-result-tools select { min-width: 0; width: 100%; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); color: var(--ink); }
+.job-discovery-recommendations { margin: 0 0 18px; padding: 15px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-tint); }
+.job-discovery-recommendations h3 { margin: 0 0 5px; color: var(--ink); font: 700 16px 'Manrope', sans-serif; }
+.job-discovery-recommendations > div > p:last-child,
+.job-discovery-recommendations > p { margin: 5px 0 0; color: var(--ink-subtle); font-size: 11px; line-height: 1.6; }
+.job-discovery-recommendations .eyebrow { margin: 0 0 4px; }
+.job-discovery-recommendations ol { margin: 12px 0 0; padding-left: 22px; display: grid; gap: 8px; }
+.job-discovery-recommendations li { padding-left: 3px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 16px; color: var(--ink-subtle); font-size: 11px; }
+.job-discovery-recommendations li a { color: var(--green); font-weight: 700; }
 .job-discovery-group-toggle { min-height: 41px; display: inline-flex; align-items: center; gap: 8px; color: var(--ink-subtle); font-size: 10px; }
 .job-discovery-company-group + .job-discovery-company-group { margin-top: 18px; }
 .job-discovery-location-group { margin-top: 18px; }
@@ -900,6 +908,10 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .job-discovery-card-title { min-width: 0; }
 .job-discovery-card-title p { margin: 0 0 4px; color: var(--accent-text); font-size: 11px; font-weight: 700; }
 .job-discovery-card-title h3 { margin: 0; color: var(--ink); font: 700 17px/1.35 'Manrope', sans-serif; overflow-wrap: anywhere; }
+.job-discovery-card .job-discovery-match-summary { margin: 12px 0 0; gap: 6px 18px; border-left: 3px solid var(--green); background: var(--surface-tint); }
+.job-discovery-card .job-discovery-match-summary dt,
+.job-discovery-card .job-discovery-match-summary dd { color: var(--ink-subtle); font-size: 11px; }
+.job-discovery-card .job-discovery-match-summary dt { font-weight: 700; }
 .job-discovery-badge, .job-discovery-category { flex: 0 0 auto; padding: 5px 8px; border: 1px solid #d5ded2; border-radius: 999px; background: #f0f4eb; color: #3e5f44; font-size: 9px; font-weight: 700; }
 .job-discovery-experience-badge { padding: 5px 8px; border: 1px solid #d5ded2; border-radius: 999px; background: #f0f4eb; color: #3e5f44; font-size: 9px; font-weight: 700; text-align: right; }
 .job-discovery-experience-badge--title { border-color: #dfc995; background: #fbf5e8; color: #705b2d; }
