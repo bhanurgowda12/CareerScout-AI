@@ -217,20 +217,23 @@ The status below describes the current implementation, not a guarantee of accura
 
 **Purpose**
 
-- Show which career-path or job-listing requirements have matching profile evidence.
+- Show which selected career-path skills have matching profile evidence and connect unverified skills to a recommended learning sequence.
 
 **Key Features**
 
-- Career recommendations compare profile evidence with catalogue pathways.
+- Career skill evidence is recalculated from the current saved profile skills, project entries, and certification entries against the selected pathway's target skills. Existing saved plan order is retained, and remaining pathway targets are supplied from the career catalogue.
+- Skills with matching profile evidence are shown as demonstrated with the source of the match. Skills without a match are unverified, not proof that the user lacks proficiency.
+- Beginner, Intermediate, and Advanced labels describe the recommended sequence only; they are not user proficiency ratings.
+- Learning completion remains user-controlled and is stored in the user's Firestore `skillProgress` collection, scoped by career and skill.
 - Job analysis compares extracted requirements with profile and optional resume text.
 - Listing comparison identifies requirements found in listing text or provider skill tags.
 - A missing text match means “unverified”; it does not establish that the user lacks a skill.
 
 **Working Process**
 
-1. Select a saved career path or analyze a job listing.
-2. Compare available requirements with the user’s profile evidence.
-3. Review matched items and areas to verify or prepare.
+1. Select a saved career recommendation and pathway.
+2. Compare its target skills with the latest saved profile skills, projects, and certifications using the shared skill-matching utility.
+3. Review demonstrated evidence and unverified skills, then use the preserved learning sequence and update completion progress as desired.
 
 ### 2.9 Learning Resources
 

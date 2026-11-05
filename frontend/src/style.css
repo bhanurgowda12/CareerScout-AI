@@ -648,6 +648,13 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .skill-gap-columns { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid var(--line); }
 .skill-gap-columns h3, .skill-gap-section-heading h3 { margin: 0 0 13px; font: 700 15px 'Manrope', sans-serif; }
 .skill-gap-muted { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.skill-gap-evidence-list { margin: 0; padding: 0; display: grid; gap: 12px; list-style: none; }
+.skill-gap-evidence-list li { display: grid; gap: 4px; color: var(--ink); font-size: 11px; line-height: 1.55; }
+.skill-gap-evidence-list li strong { font: 700 12px 'Manrope', sans-serif; }
+.skill-gap-evidence-list li span, .skill-evidence-explanation { color: var(--muted); }
+.skill-gap-priority-note { margin-top: 12px; }
+.skill-gap-demonstrated-resources { margin-top: 24px; }
+.skill-gap-resources section > h4 { margin: 0 0 12px; color: var(--ink); font: 700 13px 'Manrope', sans-serif; }
 .skill-gap-sequence ol { margin: 0; padding: 0; display: grid; gap: 8px; list-style: none; }
 .skill-gap-sequence li { min-width: 0; display: grid; grid-template-columns: 25px minmax(0, 1fr) auto; align-items: center; gap: 9px; color: #47534a; font-size: 11px; }
 .skill-sequence-number { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; border-radius: 50%; background: #e9eddf; color: var(--green); font-size: 10px; font-weight: 700; }
@@ -669,6 +676,9 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .skill-resource-heading h4 { margin: 0; color: var(--ink); font: 700 16px 'Manrope', sans-serif; overflow-wrap: anywhere; }
 .skill-completion-status { padding: 4px 7px; border: 1px solid #eadfbe; border-radius: 999px; background: #fbf6e9; color: #715b27; font-size: 9px; font-weight: 700; }
 .skill-completion-status--done { border-color: #c6d9c3; background: #edf5eb; color: #315f3b; }
+.skill-evidence-status { padding: 4px 7px; border: 1px solid #eadfbe; border-radius: 999px; background: #fbf6e9; color: #715b27; font-size: 9px; font-weight: 700; }
+.skill-evidence-status--demonstrated { border-color: #c6d9c3; background: #edf5eb; color: #315f3b; }
+.skill-evidence-explanation { margin: 13px 0 0; font-size: 11px; line-height: 1.6; }
 .skill-resource-heading .button { min-height: 38px; flex: 0 0 auto; border: 0; cursor: pointer; font-size: 10px; }
 .skill-resource-heading .button-secondary { background: #fff; border: 1px solid #cbd2c9; }
 .skill-resource-heading button:disabled { cursor: wait; opacity: 0.65; }
@@ -2494,6 +2504,10 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 :root[data-theme="dark"] .skill-priority--advanced { border: 1px solid #754b43; background: #3d2925; color: #f0b7a9; }
 :root[data-theme="dark"] .skill-completion-status { border-color: #6c5c3a; background: #39311f; color: #ead7a7; }
 :root[data-theme="dark"] .skill-completion-status--done { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
+:root[data-theme="dark"] .skill-evidence-status { border-color: #6c5c3a; background: #39311f; color: #ead7a7; }
+:root[data-theme="dark"] .skill-evidence-status--demonstrated { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
+:root[data-theme="dark"] .skill-gap-evidence-list li,
+:root[data-theme="dark"] .skill-gap-resources section > h4 { color: #dce8de; }
 :root[data-theme="dark"] .skill-video-heading h5 { color: #dce8de; }
 :root[data-theme="dark"] .learning-language-badge { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
 :root[data-theme="dark"] .skill-gap-error,
