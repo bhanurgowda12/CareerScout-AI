@@ -675,7 +675,7 @@ CareerScout-AI/
 | --- | --- |
 | Git | Required to clone and contribute. |
 | Python | 3.10 or later for the backend. |
-| Node.js and npm | Node.js 18 or later; npm is included with Node.js. |
+| Node.js and npm | Node.js 24.12 or later; npm is included with Node.js. |
 | Firebase project | Authentication, Firestore, Storage, Firebase AI Logic, and App Check configuration for the corresponding features. |
 | Google Application Default Credentials | Required for backend Firebase Admin token verification; local development can use `gcloud auth application-default login`. |
 | YouTube Data API key | Optional for backend startup; required for YouTube video search. |
