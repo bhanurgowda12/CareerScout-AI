@@ -39,20 +39,29 @@ async function mockBackend(page, { onJobSearch } = {}) {
 }
 
 async function getAxeViolations(page, label) {
-  await page.evaluate(() => {
-    for (const animation of document.getAnimations()) {
-      if (animation.playState === 'running' && animation.effect?.getTiming().duration !== Infinity) {
-        animation.finish();
+  const motionStyles = await page.addStyleTag({
+    content: `
+      *,
+      *::before,
+      *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
       }
-    }
+    `,
   });
-  await page.addScriptTag({ content: axe.source });
-  const results = await page.evaluate(async () => window.axe.run(document, {
-    runOnly: {
-      type: 'tag',
-      values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'],
-    },
-  }));
+  let results;
+  try {
+    await page.addScriptTag({ content: axe.source });
+    results = await page.evaluate(async () => window.axe.run(document, {
+      runOnly: {
+        type: 'tag',
+        values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'],
+      },
+    }));
+  } finally {
+    await motionStyles.evaluate((element) => element.remove());
+  }
   const details = results.violations.map((violation) => ({
     id: violation.id,
     impact: violation.impact,
