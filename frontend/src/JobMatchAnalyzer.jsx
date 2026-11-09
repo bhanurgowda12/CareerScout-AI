@@ -431,8 +431,8 @@ export function JobMatchAnalyzer({ user, onBack, onContinueLearning, initialJobD
           {analysisError && <p className="job-match-error job-match-error--request" role="alert">{analysisError}</p>}
 
           {result && (
-            <section className="job-match-results" aria-labelledby="job-match-results-title" aria-live="polite">
-              <div className="job-match-results-header">
+            <section className="job-match-results" aria-labelledby="job-match-results-title">
+              <div className="job-match-results-header" role="status" aria-live="polite">
                 <div>
                   <p className="eyebrow">Your analysis</p>
                   <h2 id="job-match-results-title">Skill coverage</h2>

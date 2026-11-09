@@ -2,6 +2,17 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, firestore } from './firebase.js';
 import {
+  DEFAULT_JOB_DISCOVERY_TIMEOUT_MS,
+  getApiBaseUrl,
+  getApiTimeoutMs,
+} from './environmentConfig.js';
+import {
+  fetchJsonWithTimeout,
+  getApiRequestErrorMessage,
+  RequestCancelledError,
+  RequestTimeoutError,
+} from './apiRequest.js';
+import {
   createExternalJobSearchLinks,
   createExternalCompanySearchLink,
   createJobPreparationRoadmap,
@@ -30,7 +41,12 @@ import {
   EMPLOYMENT_FILTERS,
 } from './jobDiscoveryUtils.js';
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+const API_BASE_URL = getApiBaseUrl(import.meta.env, { isProduction: import.meta.env.PROD });
+const JOB_DISCOVERY_TIMEOUT_MS = getApiTimeoutMs(
+  import.meta.env,
+  'VITE_JOB_DISCOVERY_TIMEOUT_MS',
+  DEFAULT_JOB_DISCOVERY_TIMEOUT_MS,
+);
 
 function descriptionPreview(description) {
   if (typeof description !== 'string') return '';
@@ -256,9 +272,9 @@ export function JobDiscovery({
     setCompanyProfile(null);
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
+    activeRequest.current?.abort();
     const controller = new AbortController();
     activeRequest.current = controller;
-    const timeoutId = window.setTimeout(() => controller.abort(), 12000);
     setLoading(true);
     try {
       const searchFilters = { limit: 500, mode: searchMode };
@@ -275,18 +291,16 @@ export function JobDiscovery({
         if (categoryTerms.length) searchFilters.category = categoryTerms;
       }
       if (selectedSkills.length) searchFilters.skills = selectedSkills;
-      const response = await fetch(`${API_BASE_URL}/api/job-discovery`, {
-        method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify(searchFilters),
-        signal: controller.signal,
-      });
-      let payload;
-      try {
-        payload = await response.json();
-      } catch {
-        throw new Error('The job service returned an invalid response.');
-      }
+      const { response, result: payload } = await fetchJsonWithTimeout(
+        `${API_BASE_URL}/api/job-discovery`,
+        {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(searchFilters),
+          signal: controller.signal,
+        },
+        JOB_DISCOVERY_TIMEOUT_MS,
+      );
       if (!response.ok) {
         if (payload?.detail && typeof payload.detail === 'object') {
           setProviderStatuses(Array.isArray(payload.detail.providerStatus) ? payload.detail.providerStatus : []);
@@ -317,13 +331,18 @@ export function JobDiscovery({
       setHasFetched(true);
     } catch (requestError) {
       if (requestGeneration.current !== generation) return;
-      setError(requestError?.name === 'AbortError'
-        ? 'Remote job listings took too long to load. Check your connection and try again.'
-        : requestError instanceof Error
-          ? requestError.message
-          : 'Remote job listings are temporarily unavailable. Please try again later.');
+      if (requestError instanceof RequestCancelledError) return;
+      if (requestError instanceof RequestTimeoutError) {
+        setError(getApiRequestErrorMessage(requestError, {
+          timeout: 'Job listings are taking longer than expected. Please try again.',
+        }));
+      } else {
+        setError(getApiRequestErrorMessage(requestError, {
+          network: 'Could not connect to the job service. Check your connection and try again.',
+          malformed: 'The job service returned an unreadable response. Please try again.',
+        }));
+      }
     } finally {
-      window.clearTimeout(timeoutId);
       if (requestGeneration.current === generation) {
         activeRequest.current = null;
         setLoading(false);
@@ -644,7 +663,7 @@ export function JobDiscovery({
           <div className="form-field job-discovery-category-picker">
             <span id="job-discovery-categories-label">Categories <small>(optional; choose one or more)</small></span>
             <details>
-              <summary aria-labelledby="job-discovery-categories-label">
+              <summary aria-label={`Categories: ${selectedCategories.length ? `${selectedCategories.length} categories selected` : 'All Job Types'}`}>
                 {selectedCategories.length ? `${selectedCategories.length} categories selected` : 'All Job Types'}
               </summary>
               <div className="job-discovery-category-options">
@@ -660,7 +679,7 @@ export function JobDiscovery({
           <div className="form-field job-discovery-category-picker job-discovery-skill-picker">
             <span id="job-discovery-skills-label">Technology skills <small>(matches any selected)</small></span>
             <details>
-              <summary aria-labelledby="job-discovery-skills-label">
+              <summary aria-label={`Technology skills: ${selectedSkills.length ? `${selectedSkills.length} skills selected` : 'Any skill'}`}>
                 {selectedSkills.length ? `${selectedSkills.length} skills selected` : 'Any skill'}
               </summary>
               <div className="job-discovery-category-options">
@@ -710,8 +729,8 @@ export function JobDiscovery({
         </div>
       )}
       {!loading && hasSearched && hasFetched && (
-        <aside className="job-discovery-coverage" aria-label="Job source coverage" aria-live="polite">
-          <p>
+        <aside className="job-discovery-coverage" aria-label="Job source coverage">
+          <p role="status" aria-live="polite">
             <strong>{experienceFilterActive
               ? experienceFilterResults.confirmedCount
               : visibleJobs.length}</strong>
@@ -841,7 +860,7 @@ export function JobDiscovery({
       )}
 
       {!loading && hasSearched && visibleJobs.length > 0 && (
-        <section className="job-discovery-results" aria-labelledby="job-discovery-results-title" aria-live="polite">
+        <section className="job-discovery-results" aria-labelledby="job-discovery-results-title">
           <div className="job-discovery-results-heading">
             <div>
               <p className="eyebrow">Listings returned by {sources.join(', ') || 'configured sources'}</p>

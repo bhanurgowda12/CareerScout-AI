@@ -192,8 +192,62 @@ async function loadPdfJs() {
   return pdfjs;
 }
 
-async function loadDocxParser() {
-  return import('mammoth');
+function createDocxWorker() {
+  return new Worker(new URL('./resumeDocxWorker.js', import.meta.url), { type: 'module' });
+}
+
+function extractDocxInWorker(bytes, signal, workerFactory = createDocxWorker) {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    let worker;
+    try {
+      worker = workerFactory();
+    } catch {
+      reject(parserError('The DOCX reader could not be started. Refresh the page and try again.', 'docx-reader-unavailable'));
+      return;
+    }
+
+    let settled = false;
+    const cleanup = () => {
+      signal?.removeEventListener('abort', handleAbort);
+      worker.terminate();
+    };
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+    const handleAbort = () => finish(
+      reject,
+      parserError('Resume text extraction was canceled.', 'aborted'),
+    );
+
+    worker.onmessage = ({ data }) => {
+      if (data?.ok && typeof data.text === 'string' && typeof data.wasTruncated === 'boolean') {
+        finish(resolve, { text: data.text, wasTruncated: data.wasTruncated });
+      } else {
+        finish(
+          reject,
+          parserError('The DOCX could not be read. It may be corrupted, encrypted, or not a valid Word document.', 'unreadable-docx'),
+        );
+      }
+    };
+    worker.onerror = () => finish(
+      reject,
+      parserError('The DOCX reader could not be loaded. Refresh the page and try again.', 'docx-reader-unavailable'),
+    );
+    signal?.addEventListener('abort', handleAbort, { once: true });
+
+    try {
+      worker.postMessage({ bytes: bytes.buffer, maxTextLength: MAX_RESUME_TEXT_LENGTH }, [bytes.buffer]);
+    } catch {
+      finish(
+        reject,
+        parserError('The DOCX could not be read. It may be corrupted, encrypted, or not a valid Word document.', 'unreadable-docx'),
+      );
+    }
+  });
 }
 
 function getPdfError(error) {
@@ -210,15 +264,20 @@ async function extractPdfText(bytes, pdfjs, signal) {
     loadingTask = pdfjs.getDocument({ data: bytes });
     const document = await loadingTask.promise;
     const pageText = [];
+    let accumulatedLength = 0;
     for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
       throwIfAborted(signal);
       const page = await document.getPage(pageNumber);
       const content = await page.getTextContent();
-      pageText.push(content.items
-        .map((item) => (typeof item?.str === 'string' ? item.str : ''))
-        .filter(Boolean)
-        .join(' '));
-      if (pageText.join('\n').length > MAX_RESUME_TEXT_LENGTH) break;
+      const pageParts = [];
+      for (const item of content.items) {
+        if (typeof item?.str === 'string' && item.str) pageParts.push(item.str);
+      }
+      const text = pageParts.join(' ');
+      if (pageNumber > 1) accumulatedLength += 1;
+      accumulatedLength += text.length;
+      pageText.push(text);
+      if (accumulatedLength > MAX_RESUME_TEXT_LENGTH) break;
     }
     return pageText.join('\n');
   } catch (error) {
@@ -285,15 +344,25 @@ export async function extractResumeText(file, options = {}) {
       );
     }
   } else {
-    try {
-      const mammoth = options.mammoth || await loadDocxParser();
-      const result = await mammoth.extractRawText({ arrayBuffer: bytes.buffer });
-      extractedText = result?.value;
-    } catch {
-      throw parserError('The DOCX could not be read. It may be corrupted, encrypted, or not a valid Word document.', 'unreadable-docx');
+    let result;
+    if (options.mammoth) {
+      try {
+        result = await options.mammoth.extractRawText({ arrayBuffer: bytes.buffer });
+      } catch {
+        throw parserError('The DOCX could not be read. It may be corrupted, encrypted, or not a valid Word document.', 'unreadable-docx');
+      }
+    } else if (typeof Worker === 'function' || options.workerFactory) {
+      result = await extractDocxInWorker(bytes, options.signal, options.workerFactory);
+    } else {
+      throw parserError('The DOCX reader requires a browser with Web Worker support. Refresh or use a supported browser.', 'docx-reader-unavailable');
     }
+    extractedText = typeof result?.text === 'string' ? result.text : result?.value;
     if (!hasReadableText(extractedText)) {
       throw parserError('No readable text was found in this DOCX resume.', 'no-readable-text');
+    }
+    if (typeof result?.wasTruncated === 'boolean') {
+      throwIfAborted(options.signal);
+      return { text: extractedText, wasTruncated: result.wasTruncated };
     }
   }
 

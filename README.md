@@ -675,7 +675,7 @@ CareerScout-AI/
 | --- | --- |
 | Git | Required to clone and contribute. |
 | Python | 3.10 or later for the backend. |
-| Node.js and npm | Node.js 18 or later; npm is included with Node.js. |
+| Node.js and npm | Node.js 24.12 or later; npm is included with Node.js. |
 | Firebase project | Authentication, Firestore, Storage, Firebase AI Logic, and App Check configuration for the corresponding features. |
 | Google Application Default Credentials | Required for backend Firebase Admin token verification; local development can use `gcloud auth application-default login`. |
 | YouTube Data API key | Optional for backend startup; required for YouTube video search. |
@@ -735,11 +735,13 @@ python -m pip install -r requirements.txt
 Create `backend\.env` (ignored by Git) or set environment variables in the backend process:
 
 ```dotenv
+CAREERSCOUT_ENV=development
+RATE_LIMIT_STORAGE=memory
 FIREBASE_PROJECT_ID=your-firebase-project-id
 YOUTUBE_API_KEY=your-restricted-youtube-data-api-key
 ```
 
-Optional variables such as `COMPANY_JOB_BOARDS_JSON` and `CAREERSCOUT_ALLOWED_ORIGINS` are listed in [Section 12](#12-environment-variables). The backend loads `backend/.env` with `python-dotenv`.
+Production deployments must set `CAREERSCOUT_ENV=production`, `RATE_LIMIT_STORAGE=redis`, and a reachable `REDIS_URL`; the backend will not fall back to process-local limits. See [Section 12](#12-environment-variables) for rate-limit settings and trusted proxy configuration. The backend loads `backend/.env` with `python-dotenv`.
 
 For local Firebase Admin credentials, configure Application Default Credentials:
 
@@ -761,23 +763,73 @@ if (-not (Test-Path .env.local)) { Copy-Item .env.example .env.local }
 
 Edit `frontend\.env.local` with the Firebase Web app values and App Check site key. Restart Vite after changing environment values.
 
+For production, set the frontend variables in the build environment before running `npm run build` from `frontend`. Production builds require all six Firebase Web app values, `VITE_FIREBASE_APP_CHECK_SITE_KEY`, and an explicit HTTPS `VITE_API_BASE_URL` pointing to the deployed API. A production build fails rather than falling back to localhost when any required value is missing or invalid. Do not set `VITE_FIREBASE_APP_CHECK_DEBUG=true` in production.
+
 ## 12. Environment Variables
 
 ### 12.1 Frontend Variables
 
 | Variable | Purpose | Required / Optional |
 | --- | --- | --- |
-| `VITE_FIREBASE_API_KEY` | Firebase Web app configuration. | Required for Firebase frontend |
-| `VITE_FIREBASE_AUTH_DOMAIN` | Firebase Web app configuration. | Required for Firebase frontend |
-| `VITE_FIREBASE_PROJECT_ID` | Firebase Web app configuration. | Required for Firebase frontend |
-| `VITE_FIREBASE_STORAGE_BUCKET` | Firebase Storage bucket. | Required for profile photo uploads |
-| `VITE_FIREBASE_MESSAGING_SENDER_ID` | Firebase Web app configuration. | Required for Firebase frontend |
-| `VITE_FIREBASE_APP_ID` | Firebase Web app configuration. | Required for Firebase frontend |
-| `VITE_FIREBASE_APP_CHECK_SITE_KEY` | reCAPTCHA Enterprise site key for Firebase App Check. | Required for App Check-backed AI usage |
-| `VITE_FIREBASE_APP_CHECK_DEBUG` | Enables App Check debug mode in development only. | Optional; defaults to `false` |
-| `VITE_API_BASE_URL` | FastAPI base URL. | Optional; defaults to `http://127.0.0.1:8000` |
+| `VITE_FIREBASE_API_KEY` | Firebase Web app configuration. This client key is public; restrict it in Google Cloud. | Required for production; configure locally to use Firebase |
+| `VITE_FIREBASE_AUTH_DOMAIN` | Firebase Web app configuration. | Required for production; configure locally to use Firebase |
+| `VITE_FIREBASE_PROJECT_ID` | Firebase Web app configuration. | Required for production; configure locally to use Firebase |
+| `VITE_FIREBASE_STORAGE_BUCKET` | Firebase Storage bucket. | Required for production; needed for profile photo uploads |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | Firebase Web app configuration. | Required for production; configure locally to use Firebase |
+| `VITE_FIREBASE_APP_ID` | Firebase Web app configuration. | Required for production; configure locally to use Firebase |
+| `VITE_FIREBASE_APP_CHECK_SITE_KEY` | Public reCAPTCHA Enterprise site key registered for Firebase App Check. | Required for production App Check and App Check-backed AI usage |
+| `VITE_FIREBASE_APP_CHECK_DEBUG` | Enables App Check debug mode in development only. | Optional; defaults to `false`; rejected when `true` in production |
+| `VITE_FIREBASE_USE_EMULATORS` | Connects Firebase Auth, Firestore, and Storage to local emulators. | Optional; defaults to `false`; only valid for Vite development, rejected in production builds |
+| `VITE_API_BASE_URL` | FastAPI base URL, centralized for job discovery, learning resources, and the development health check. | Local development defaults to `http://127.0.0.1:8000`; production requires an explicit HTTPS, non-local URL |
+| `VITE_JOB_DISCOVERY_TIMEOUT_MS` | Browser wait limit for job discovery. Set it slightly longer than the backend `CAREERSCOUT_JOB_DISCOVERY_DEADLINE_SECONDS` so the backend can return partial results and deadline status. | Optional; defaults to 17,000 ms, matching the backend's 15-second default plus 2 seconds |
+| `VITE_LEARNING_RESOURCES_TIMEOUT_MS` | Browser wait limit for each learning-resource request, including response parsing. | Optional; defaults to 15,000 ms |
 
-These values are defined in the tracked `frontend/.env.example`. `VITE_` variables are included in the browser bundle and must not contain private credentials.
+These values are defined in the tracked `frontend/.env.example`. Copy it to `frontend/.env.local` for local work and replace Firebase placeholders. Production values must be supplied to the production build environment; Vite embeds `VITE_` values into the browser bundle. Never put private credentials, API secrets, service-account keys, or other confidential values in `VITE_` variables. Firebase Web app configuration and the App Check site key are public client values, not private secrets; apply the appropriate key restrictions in Google Cloud/Firebase.
+
+### Firebase Emulator Suite
+
+The repository configures local Auth, Firestore, and Storage emulators using the existing [Firestore rules](./firestore.rules) and [Storage rules](./storage.rules). Emulator commands always use the reserved `demo-careerscout-ai` project ID; this is a demo-only project that cannot access production Firebase resources. Do not change it to a production project ID. The browser client connects to emulator loopback addresses only when the explicit `VITE_FIREBASE_USE_EMULATORS=true` setting is loaded by a development server. Production builds reject that setting and cannot enable emulator connections.
+
+Prerequisites:
+
+- Node.js 24.12 or newer for the installed Firebase rules testing package.
+- Java 21 or newer for the Firestore emulator.
+- Frontend dependencies installed with `npm ci`.
+
+Ports are bound to loopback:
+
+| Emulator | Port | Console |
+| --- | ---: | --- |
+| Auth | 9099 | Emulator UI at `http://127.0.0.1:4000/auth` |
+| Firestore | 8080 | Emulator UI at `http://127.0.0.1:4000/firestore` |
+| Storage | 9199 | Emulator UI at `http://127.0.0.1:4000/storage` |
+| Emulator UI | 4000 | `http://127.0.0.1:4000` |
+
+Run the integration suite in one command (Firebase CLI downloads emulator binaries on first run):
+
+```powershell
+Set-Location .\frontend
+npm run test:emulator
+```
+
+Or start emulators for manual development in one terminal:
+
+```powershell
+Set-Location .\frontend
+npm run emulators:start
+```
+
+In another terminal, copy the synthetic-only config and start Vite:
+
+```powershell
+Set-Location .\frontend
+if (-not (Test-Path .env.emulator)) { Copy-Item .env.emulator.example .env.emulator }
+npm run dev:emulator
+```
+
+The tracked `frontend/.env.emulator.example` contains fake Firebase client values, the demo project ID, local API URL, and explicit emulator opt-in. The copied `.env.emulator` is ignored by git. Emulator integration tests create random `@example.test` accounts and synthetic profile, tracker, progress, and avatar data; they reset Firestore and Storage between tests. The Auth emulator itself is isolated to the demo project and its in-memory state ends when the emulator process stops. The tests use `@firebase/rules-unit-testing` contexts for Firestore/Storage access and the Auth emulator REST API for account creation/sign-in. They exercise the checked-in production rules without weakening or replacing them.
+
+`npm run test:emulator` requires a working Java installation and emulator downloads; if unavailable, the integration suite cannot run and should be reported as blocked rather than passed. These tests do not contact production Firebase or replace a separate staging integration check.
 
 ### 12.2 Backend Variables
 
@@ -788,8 +840,28 @@ These values are defined in the tracked `frontend/.env.example`. `VITE_` variabl
 | `GOOGLE_APPLICATION_CREDENTIALS` | Google Auth path to a service-account JSON file for ADC. | Optional when other ADC is configured |
 | `COMPANY_JOB_BOARDS_JSON` | Company profiles and board identifiers for Greenhouse, Lever, or Ashby. | Optional; no boards are configured by default |
 | `CAREERSCOUT_ALLOWED_ORIGINS` | Comma-separated additional CORS origins. | Optional; local Vite origins are built in |
+| `CAREERSCOUT_ENV` | Runtime environment: `local`, `development`, `test`, or `production`. Defaults to `production`. | Set explicitly; production requires Redis |
+| `RATE_LIMIT_STORAGE` | Rate-limit backend: `redis` or local-only `memory`. | Redis in production; memory defaults only in local, development, or test |
+| `REDIS_URL` | Redis connection URL used for shared rate-limit state across workers and instances. | Required when `RATE_LIMIT_STORAGE=redis` |
+| `CAREERSCOUT_TRUSTED_PROXY_CIDRS` | Comma-separated proxy IP addresses/CIDRs allowed to supply `X-Forwarded-For`. | Optional; unset means forwarded IP headers are ignored |
+| `CAREERSCOUT_JOB_DISCOVERY_RATE_LIMIT` | GET and POST job-discovery requests allowed per client IP in the configured window. | Optional; defaults to 120 |
+| `CAREERSCOUT_JOB_DISCOVERY_RATE_WINDOW_SECONDS` | Job-discovery rate-limit window in seconds. | Optional; defaults to 60 |
+| `CAREERSCOUT_JOB_DISCOVERY_DEADLINE_SECONDS` | Overall time a job-discovery request waits for provider results. Timed-out sources are marked failed; successful sources are retained. | Optional; defaults to 15 seconds |
+| `CAREERSCOUT_JOB_DISCOVERY_STALE_CACHE_MAX_AGE_SECONDS` | Maximum age for cached provider listings served after a refresh fails. | Optional; defaults to 86,400 seconds (24 hours) |
+| `CAREERSCOUT_LEARNING_RATE_LIMIT` | Learning-resource requests allowed per authenticated Firebase user in the configured window. | Optional; defaults to 30 |
+| `CAREERSCOUT_LEARNING_RATE_WINDOW_SECONDS` | Learning-resource rate-limit window in seconds. | Optional; defaults to 60 |
+| `CAREERSCOUT_PROVIDER_MAX_CONCURRENT` | Maximum provider calls active across all instances when using Redis coordination (1–256). All instances must use the same value. | Optional; defaults to 8 |
+| `CAREERSCOUT_PROVIDER_WORKERS` | Per-instance provider worker thread count (1–64). | Optional; defaults to 7 |
+| `CAREERSCOUT_PROVIDER_MAX_PENDING` | Per-instance bound on provider tasks queued in addition to active worker threads (1–512). | Optional; defaults to 21 |
+| `CAREERSCOUT_COMPANY_BOARD_MAX_FETCHES_PER_SEARCH` | Maximum company-board feeds scheduled by one search request (1–36). | Optional; defaults to 12 |
+| `CAREERSCOUT_PROVIDER_CONCURRENCY_LEASE_SECONDS` | Redis provider-slot lease duration; leases expire after process failure. Minimum 30 seconds. | Optional; defaults to 60 |
+| `CAREERSCOUT_PROVIDER_SINGLEFLIGHT_WAIT_SECONDS` | Maximum time a concurrent request waits for the same company-board fetch. | Optional; defaults to 15 |
 
 The backend loads `backend/.env`; no backend environment example file is tracked. Never commit populated environment files, private keys, service-account files, or App Check debug tokens.
+
+Rate-limited requests return HTTP 429 with a `Retry-After` header. Public job discovery remains unauthenticated. Forwarded client IPs are used only when the direct peer is in `CAREERSCOUT_TRUSTED_PROXY_CIDRS`; configure only proxy ranges controlled by your deployment.
+
+Provider concurrency and company-board single-flight coordination use the same Redis deployment as rate limiting in production. Instances register and verify a shared concurrency configuration at startup; a mismatch prevents startup. When intentionally changing the concurrency or lease settings, coordinate the rollout and remove the `careerscout:{provider-config}:configuration` Redis key during a maintenance window before starting the new configuration. Local and test environments use process-local limits, which do not coordinate across processes.
 
 ## 13. Running the Application
 
@@ -866,8 +938,34 @@ Run frontend tests and build from `frontend`:
 ```powershell
 Set-Location .\frontend
 npm test
+npm run test:e2e
 npm run build
+npm run check:bundle
 ```
+
+### Browser E2E tests
+
+The frontend E2E suite uses Playwright Test and starts the Auth, Firestore, and Storage emulators under the demo-only project `demo-careerscout-ai`. Playwright starts Vite automatically on `http://127.0.0.1:4173` through its `webServer` configuration. Each authenticated test creates a unique synthetic `example.test` account, verifies it using the Auth emulator, and signs in through the normal application interface. Profile, job application, and learning-progress changes use the app and the existing Firestore rules; every test account has its own user-scoped documents.
+
+Job-discovery and learning-resource API responses are mocked by Playwright with synthetic provider/video data. Browser requests to non-loopback hosts are blocked. The E2E suite does not use production Firebase, a deployed backend, or live job/YouTube providers. Firebase CLI, Java, and the Playwright Chromium browser are required; no Firebase credentials or running backend are needed.
+
+After installing frontend dependencies with `npm ci`, install the Playwright browser once:
+
+```powershell
+Set-Location .\frontend
+npx playwright install chromium
+```
+
+Run the browser suite and open its HTML report:
+
+```powershell
+npm run test:e2e
+npm run test:e2e:report
+```
+
+`npm run test:e2e` starts and stops the Firebase emulators for the run, then executes the browser suite. The suite covers public-page smoke states plus emulator-backed sign-in/sign-out, profile edits and reload persistence, filtered job discovery against mocked listings, application status updates and persistence, and learning-progress persistence with mocked YouTube results. Test accounts and user-scoped documents are isolated with unique IDs; restarting the emulators clears their local data. The separate `npm run test:emulator` suite continues to exercise Firebase rules and service behavior directly. These tests do not prove integration with a deployed Firebase project, backend, Redis, or external providers.
+
+The production build runs the bundle check automatically. It reports initial static JavaScript/CSS separately from lazy chunks and enforces raw and gzip budgets; `npm run check:bundle` reruns the report against the existing build. PDF.js and its worker are deferred until resume parsing, while DOCX parsing runs in its worker. Bundle budgets do not replace browser-network or runtime performance measurements.
 
 Run backend tests from `backend`:
 
@@ -876,11 +974,19 @@ Set-Location .\backend
 python -m unittest discover -v
 ```
 
-Backend provider tests mock external services; they do not verify live provider availability. Check working-tree whitespace from the repository root:
+Backend tests are unit/API tests; upstream providers, Redis failures, and Firebase token verification are mocked. No live Redis instance, Firebase Auth emulator/project, or production provider integration is exercised by this suite. Deployment validation must separately verify connectivity, credentials, rate-limit and concurrency coordination, and upstream provider behavior against the configured services. Check working-tree whitespace from the repository root:
 
 ```powershell
 git diff --check
 ```
+
+### GitHub Actions CI
+
+The `.github/workflows/ci.yml` workflow runs on pull requests targeting `main` and pushes to any branch. It runs frontend tests/build/bundle budgets, the backend `unittest` suite, Firebase Auth/Firestore/Storage emulator integration tests, and Playwright browser and accessibility tests. The browser job installs Chromium and its Linux dependencies; failed runs upload the Playwright HTML report, traces, and failure screenshots. A final Actions summary lists each validation job's result.
+
+CI uses Node.js 24.12, Python 3.12, and Java 21. All Firebase browser and integration tests use the `demo-careerscout-ai` emulator project and synthetic data; the production build uses placeholder client configuration. No Firebase credentials, API secrets, deployed services, or live external providers are required. The backend tests mock Firebase, Redis, and upstream providers.
+
+To run the same validation locally, use `npm ci` followed by `npm test`, `npm run build`, `npm run check:bundle`, `npm run test:emulator`, and `npm run test:e2e` from `frontend`; run `python -m pip install -r requirements.txt` and `python -m unittest discover -v` from `backend`. Local emulator tests additionally require Java 21 or newer.
 
 ## 16. Security and Data Protection
 

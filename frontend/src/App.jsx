@@ -1,19 +1,25 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import AuthPanel from './AuthPanel.jsx';
 import { auth, firestore } from './firebase.js';
-import SettingsPage from './SettingsPage.jsx';
-import StudentProfile from './StudentProfile.jsx';
-import CareerRecommendations from './CareerRecommendations.jsx';
-import SkillGapLearning from './SkillGapLearning.jsx';
-import JobMatchAnalyzer from './JobMatchAnalyzer.jsx';
-import JobApplicationTracker from './JobApplicationTracker.jsx';
-import JobDiscovery from './JobDiscovery.jsx';
-import StudentDashboard from './StudentDashboard.jsx';
-import ResumeBuilder from './ResumeBuilder.jsx';
-import UsernameSetup, { isValidUsername } from './UsernameSetup.jsx';
-import { readThemePreference, writeThemePreference } from './settingsUtils.js';
+import PageContent from './PageContent.js';
+import { getPageFromHash, pageHashes } from './pageRoutes.js';
+import { focusNavigationContent } from './navigationAccessibility.js';
+import { isValidUsername, readThemePreference, writeThemePreference } from './settingsUtils.js';
+import { getApiBaseUrl } from './environmentConfig.js';
+
+const SettingsPage = lazy(() => import('./SettingsPage.jsx'));
+const StudentProfile = lazy(() => import('./StudentProfile.jsx'));
+const CareerRecommendations = lazy(() => import('./CareerRecommendations.jsx'));
+const SkillGapLearning = lazy(() => import('./SkillGapLearning.jsx'));
+const JobMatchAnalyzer = lazy(() => import('./JobMatchAnalyzer.jsx'));
+const JobApplicationTracker = lazy(() => import('./JobApplicationTracker.jsx'));
+const JobDiscovery = lazy(() => import('./JobDiscovery.jsx'));
+const StudentDashboard = lazy(() => import('./StudentDashboard.jsx'));
+const ResumeBuilder = lazy(() => import('./ResumeBuilder.jsx'));
+const UsernameSetup = lazy(() => import('./UsernameSetup.jsx'));
+const API_BASE_URL = getApiBaseUrl(import.meta.env, { isProduction: import.meta.env.PROD });
 
 const highlights = [
   {
@@ -45,28 +51,7 @@ const workflowSteps = [
   'Track progress',
 ];
 
-const pageHashes = {
-  home: '',
-  dashboard: '#student-dashboard',
-  profile: '#student-profile',
-  recommendations: '#career-recommendations',
-  learning: '#skill-gap-learning',
-  jobMatch: '#job-match-analyzer',
-  jobTracker: '#job-application-tracker',
-  jobDiscovery: '#job-discovery',
-  resume: '#resume-builder',
-  settings: '#settings',
-  login: '#sign-in',
-  register: '#get-started',
-  username: '#choose-username',
-};
-
 const protectedPages = new Set(['dashboard', 'profile', 'recommendations', 'learning', 'jobMatch', 'jobTracker', 'jobDiscovery', 'resume', 'settings', 'username']);
-
-function getPageFromHash(hash) {
-  if (hash === '#top') return 'home';
-  return Object.entries(pageHashes).find(([, routeHash]) => routeHash && routeHash === hash)?.[0] || 'home';
-}
 
 function hasVerifiedAccess(user) {
   return Boolean(user && (
@@ -76,8 +61,10 @@ function hasVerifiedAccess(user) {
 }
 
 function App() {
+  const pageFocusRootRef = useRef(null);
   const [apiStatus, setApiStatus] = useState('checking');
   const [currentPage, setCurrentPage] = useState(() => getPageFromHash(window.location.hash));
+  const [navigationRevision, setNavigationRevision] = useState(0);
   const [theme, setTheme] = useState(readThemePreference);
   const [authUser, setAuthUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
@@ -97,6 +84,7 @@ function App() {
     const routeHash = pageHashes[page] ?? '';
     const currentHash = window.location.hash;
     setCurrentPage(page);
+    setNavigationRevision((revision) => revision + 1);
     setMobileNavOpen(false);
     if (currentHash !== routeHash) {
       const nextUrl = `${window.location.pathname}${window.location.search}${routeHash}`;
@@ -109,6 +97,14 @@ function App() {
     document.documentElement.dataset.theme = theme;
     writeThemePreference(theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (navigationRevision === 0) return;
+    focusNavigationContent(pageFocusRootRef.current, {
+      hash: window.location.hash,
+      routeHashes: pageHashes,
+    });
+  }, [navigationRevision]);
 
   useEffect(() => {
     if (!auth) {
@@ -179,6 +175,7 @@ function App() {
     function syncPageFromLocation() {
       setCurrentPage(getPageFromHash(window.location.hash));
       setMobileNavOpen(false);
+      setNavigationRevision((revision) => revision + 1);
     }
 
     window.addEventListener('hashchange', syncPageFromLocation);
@@ -235,7 +232,7 @@ function App() {
 
     async function checkBackend() {
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/health', {
+        const response = await fetch(`${API_BASE_URL}/api/health`, {
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -372,12 +369,12 @@ function App() {
   }
 
   return (
-    <main className={isAuthenticatedAppView ? 'app-shell-root' : 'site-root'}>
+    <main ref={pageFocusRootRef} className={isAuthenticatedAppView ? 'app-shell-root' : 'site-root'}>
       {isAuthenticatedAppView ? (
         <>
           <aside className={`app-sidebar${mobileNavOpen ? ' app-sidebar--open' : ''}${sidebarCollapsed ? ' app-sidebar--collapsed' : ''}`}>
             <div className="app-sidebar__header">
-              <a className="brand app-brand" href={pageHashes.dashboard} aria-label="CareerScout AI dashboard" onClick={(event) => { event.preventDefault(); navigate('dashboard'); }}>
+              <a className="brand app-brand" href={pageHashes.dashboard} onClick={(event) => { event.preventDefault(); navigate('dashboard'); }}>
                 <span className="brand-mark" aria-hidden="true">C</span>
                 {!sidebarCollapsed && <span>CareerScout<span className="brand-ai"> AI</span></span>}
               </a>
@@ -435,7 +432,7 @@ function App() {
             </div>
           </aside>
 
-          <div className="app-main" aria-live="polite">
+          <div className="app-main">
             <header className="app-topbar">
               <div className="app-topbar__left">
                 <button
@@ -462,6 +459,7 @@ function App() {
 
             {authNotice && <p className="auth-global-notice" role="alert">{authNotice}</p>}
             <div className="app-content">
+              <PageContent pageKey={currentPage}>
               {currentPage === 'dashboard' && hasVerifiedAccess(authUser) ? (
                 <StudentDashboard
                   user={authUser}
@@ -541,6 +539,7 @@ function App() {
                   onBack={() => navigate(trackerPrefill ? 'jobDiscovery' : 'dashboard')}
                 />
               ) : null}
+              </PageContent>
             </div>
           </div>
 
@@ -549,7 +548,7 @@ function App() {
       ) : (
         <>
           <header className="site-header">
-            <a className="brand" href="#top" aria-label="CareerScout AI home" aria-current={currentPage === 'home' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigate('home'); }}>
+            <a className="brand" href="#top" aria-current={currentPage === 'home' ? 'page' : undefined} onClick={(event) => { event.preventDefault(); navigate('home'); }}>
               <span className="brand-mark" aria-hidden="true">C</span>
               <span>CareerScout<span className="brand-ai"> AI</span></span>
             </a>
@@ -597,6 +596,7 @@ function App() {
 
           {authNotice && <p className="auth-global-notice" role="alert">{authNotice}</p>}
 
+          <PageContent pageKey={currentPage}>
           {!authReady && currentPage !== 'home' ? (
             <div className="recommendation-state dashboard-state" role="status"><span className="recommendation-spinner" aria-hidden="true" /><p>Checking your sign-in...</p></div>
           ) : protectedPages.has(currentPage) && !hasVerifiedAccess(authUser) ? (
@@ -797,6 +797,7 @@ function App() {
             </button>
           </section>
           </>}
+          </PageContent>
 
           <footer className="site-footer">
             <a className="brand footer-brand" href="#top" onClick={(event) => { event.preventDefault(); navigate('home'); }}>
