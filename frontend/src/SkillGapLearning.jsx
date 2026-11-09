@@ -13,6 +13,16 @@ import {
   where,
 } from 'firebase/firestore';
 import { auth, firestore } from './firebase.js';
+import {
+  DEFAULT_LEARNING_RESOURCES_TIMEOUT_MS,
+  getApiBaseUrl,
+  getApiTimeoutMs,
+} from './environmentConfig.js';
+import {
+  getApiRequestErrorMessage,
+  RequestCancelledError,
+  RequestTimeoutError,
+} from './apiRequest.js';
 import { buildCareerLearningPlan, getCareerProgressDocumentId } from './careerCatalog.js';
 import { normalizeJobRequirements, normalizeSkillName } from './jobMatchUtils.js';
 import { getResourceById } from './resourceCatalog.js';
@@ -22,7 +32,12 @@ import {
 } from './learningResourcesApi.js';
 import { calculateSkillGaps } from './skillGapUtils.js';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
+const API_BASE_URL = getApiBaseUrl(import.meta.env, { isProduction: import.meta.env.PROD });
+const LEARNING_RESOURCES_TIMEOUT_MS = getApiTimeoutMs(
+  import.meta.env,
+  'VITE_LEARNING_RESOURCES_TIMEOUT_MS',
+  DEFAULT_LEARNING_RESOURCES_TIMEOUT_MS,
+);
 const EMPTY_PROFILE = {};
 const LEARNING_LANGUAGES = [
   { code: 'en', label: 'English' },
@@ -219,14 +234,20 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
   const [submittedLanguages, setSubmittedLanguages] = useState(null);
   const [languageError, setLanguageError] = useState('');
   const searchGeneration = useRef(0);
-  const inFlightRequests = useRef(new Set());
+  const inFlightRequests = useRef(new Map());
   const isMounted = useRef(false);
+
+  function cancelResourceRequests() {
+    for (const { controller } of inFlightRequests.current.values()) controller.abort();
+    inFlightRequests.current.clear();
+  }
 
   useEffect(() => {
     isMounted.current = true;
     return () => {
       isMounted.current = false;
       searchGeneration.current += 1;
+      cancelResourceRequests();
     };
   }, []);
 
@@ -337,6 +358,7 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
   }
 
   useEffect(() => {
+    cancelResourceRequests();
     searchGeneration.current += 1;
     setResourcesBySkill({});
     setResourcesOwnerUid(user?.uid || '');
@@ -452,7 +474,8 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
         && isResourceRequestSelected(skill, language);
     };
     if (inFlightRequests.current.has(requestKey)) return;
-    inFlightRequests.current.add(requestKey);
+    const controller = new AbortController();
+    inFlightRequests.current.set(requestKey, { controller, generation });
     if (pageToken) {
       updateResource(skill, language, (previous) => ({ ...previous, loadingMore: true, moreError: '' }));
     } else {
@@ -470,6 +493,8 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
         language,
         currentUser,
         pageToken,
+        globalThis.fetch,
+        { signal: controller.signal, timeoutMs: LEARNING_RESOURCES_TIMEOUT_MS },
       );
       if (!requestIsCurrent()) return;
       if (!response.ok) throw new Error(getResourceErrorMessage(response, result));
@@ -493,17 +518,26 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
         };
       });
     } catch (error) {
+      if (error instanceof RequestCancelledError) return;
       if (!requestIsCurrent()) return;
-      const message = error instanceof Error
-        ? error.message
-        : 'The learning resources service is unavailable. Check the backend and retry.';
+      const message = error instanceof RequestTimeoutError
+        ? getApiRequestErrorMessage(error, {
+          timeout: 'The video search took too long. Check your connection and retry.',
+        })
+        : getApiRequestErrorMessage(error, {
+          network: 'Could not connect to the learning resources service. Check your connection and retry.',
+          malformed: 'The learning resources service returned an unreadable response. Please retry.',
+        });
       updateResource(skill, language, (previous) => pageToken
         ? { ...previous, loadingMore: false, moreError: message }
         : { status: 'error', message, videos: [] });
     } finally {
-      inFlightRequests.current.delete(requestKey);
+      if (inFlightRequests.current.get(requestKey)?.controller === controller) {
+        inFlightRequests.current.delete(requestKey);
+      }
       if (
-        isMounted.current
+        !controller.signal.aborted
+        && isMounted.current
         && generation !== searchGeneration.current
         && activeResourceContext.current.userId === user?.uid
         && auth?.currentUser?.uid === user?.uid
@@ -519,6 +553,7 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
       setLanguageError('Choose at least one language before searching.');
       return;
     }
+    cancelResourceRequests();
     searchGeneration.current += 1;
     setResourcesBySkill({});
     setLanguageError('');
@@ -526,6 +561,7 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
   }
 
   function changeLanguages() {
+    cancelResourceRequests();
     searchGeneration.current += 1;
     setResourcesBySkill({});
     setSubmittedLanguages(null);
@@ -549,7 +585,10 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
       }
     }
     void Promise.all(Array.from({ length: workerCount }, () => runWorker()));
-    return () => { searchGeneration.current += 1; };
+    return () => {
+      searchGeneration.current += 1;
+      cancelResourceRequests();
+    };
   }, [submittedLanguages, selectedRecord?.id, selectedCareerPath, user?.uid, learningPlans]);
 
   useEffect(() => {
@@ -566,6 +605,7 @@ function SkillGapLearning({ user, onRequestSignIn, focusSkill = '', focusCareerP
     void loadFocusedResources();
     return () => {
       searchGeneration.current += 1;
+      cancelResourceRequests();
     };
   }, [focusedSkillMode, focusedSkill, submittedLanguages, user?.uid]);
 

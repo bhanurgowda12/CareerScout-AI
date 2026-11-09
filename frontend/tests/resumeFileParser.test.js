@@ -96,12 +96,145 @@ test('extracts readable text from a valid PDF locally', async () => {
   assert.deepEqual(result, { text: 'Python and SQL', wasTruncated: false });
 });
 
+test('large multi-page PDFs retain the existing text limit and stop extracting after the limit is exceeded', async () => {
+  const file = pdfFile();
+  let extractedPages = 0;
+  const pdfjs = {
+    getDocument: () => ({
+      promise: Promise.resolve({
+        numPages: 12_001,
+        getPage: async () => ({
+          getTextContent: async () => {
+            extractedPages += 1;
+            return { items: [{ str: 'a' }] };
+          },
+        }),
+      }),
+      destroy: async () => {},
+    }),
+  };
+
+  const result = await extractResumeText(file, { pdfjs });
+
+  assert.equal(result.text, Array(6_001).fill('a').join('\n').slice(0, MAX_RESUME_TEXT_LENGTH));
+  assert.equal(result.text.length, MAX_RESUME_TEXT_LENGTH);
+  assert.equal(result.wasTruncated, true);
+  assert.equal(extractedPages, 6_001);
+});
+
+test('large PDF text pages preserve extracted text while bounding subsequent page work', async () => {
+  let extractedPages = 0;
+  const pdfjs = {
+    getDocument: () => ({
+      promise: Promise.resolve({
+        numPages: 100,
+        getPage: async () => ({
+          getTextContent: async () => {
+            extractedPages += 1;
+            return { items: Array.from({ length: 20_000 }, () => ({ str: 'word' })) };
+          },
+        }),
+      }),
+      destroy: async () => {},
+    }),
+  };
+
+  const result = await extractResumeText(pdfFile(), { pdfjs });
+
+  assert.equal(result.text, Array(20_000).fill('word').join(' ').slice(0, MAX_RESUME_TEXT_LENGTH));
+  assert.equal(result.wasTruncated, true);
+  assert.equal(extractedPages, 1);
+});
+
+test('malformed PDF page text structures are reported as unreadable documents', async () => {
+  const pdfjs = {
+    getDocument: () => ({
+      promise: Promise.resolve({
+        numPages: 1,
+        getPage: async () => ({ getTextContent: async () => ({ items: null }) }),
+      }),
+      destroy: async () => {},
+    }),
+  };
+
+  await assert.rejects(
+    extractResumeText(pdfFile(), { pdfjs }),
+    (error) => error instanceof ResumeFileParserError && error.code === 'unreadable-pdf',
+  );
+});
+
 test('extracts readable text from a valid DOCX locally', async () => {
   const result = await extractResumeText(docxFile(), {
     mammoth: { extractRawText: async () => ({ value: 'React developer experience' }) },
   });
 
   assert.deepEqual(result, { text: 'React developer experience', wasTruncated: false });
+});
+
+test('DOCX worker receives bytes and returns the same bounded extracted text', async () => {
+  let workerMessage;
+  let terminated = false;
+  const workerFactory = () => ({
+    postMessage(message, transfer) {
+      workerMessage = { message, transfer };
+      queueMicrotask(() => this.onmessage({
+        data: { ok: true, text: 'React developer experience', wasTruncated: false },
+      }));
+    },
+    terminate() { terminated = true; },
+  });
+
+  const result = await extractResumeText(docxFile(), { workerFactory });
+
+  assert.deepEqual(result, { text: 'React developer experience', wasTruncated: false });
+  assert.equal(workerMessage.message.maxTextLength, MAX_RESUME_TEXT_LENGTH);
+  assert.equal(workerMessage.message.bytes instanceof ArrayBuffer, true);
+  assert.deepEqual(workerMessage.transfer, [workerMessage.message.bytes]);
+  assert.equal(terminated, true);
+});
+
+test('DOCX worker reports malformed documents without exposing parser errors', async () => {
+  const workerFactory = () => ({
+    postMessage() {
+      queueMicrotask(() => this.onmessage({ data: { ok: false } }));
+    },
+    terminate() {},
+  });
+
+  await assert.rejects(
+    extractResumeText(docxFile(), { workerFactory }),
+    (error) => error instanceof ResumeFileParserError
+      && error.code === 'unreadable-docx'
+      && /corrupted|encrypted|valid Word document/i.test(error.message),
+  );
+});
+
+test('canceling DOCX worker parsing terminates the worker and reports cancellation', async () => {
+  const controller = new AbortController();
+  let worker;
+  let markWorkerStarted;
+  const workerStarted = new Promise((resolve) => { markWorkerStarted = resolve; });
+  const workerFactory = () => {
+    worker = {
+      postMessage() {},
+      terminate() { this.terminated = true; },
+    };
+    markWorkerStarted();
+    return worker;
+  };
+
+  const extraction = extractResumeText(docxFile(), {
+    signal: controller.signal,
+    workerFactory,
+  });
+  await workerStarted;
+  controller.abort();
+
+  await assert.rejects(
+    extraction,
+    (error) => error instanceof ResumeFileParserError && error.code === 'aborted',
+  );
+  assert.equal(worker.terminated, true);
 });
 
 test('rejects unsupported file extensions', async () => {

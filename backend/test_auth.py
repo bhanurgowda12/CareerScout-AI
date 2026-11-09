@@ -11,6 +11,9 @@ from fastapi.testclient import TestClient
 from firebase_admin import auth as firebase_auth
 from firebase_admin import exceptions as firebase_exceptions
 
+os.environ["CAREERSCOUT_ENV"] = "test"
+os.environ["RATE_LIMIT_STORAGE"] = "memory"
+
 import main
 
 
@@ -123,6 +126,36 @@ class FirebaseAuthenticationTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 401)
         self.assertEqual(raised.exception.detail["code"], "firebase-token-expired")
         self.assertIn("category=expired-token", captured_logs.output[0])
+
+    def test_revoked_token_returns_401(self):
+        with (
+            patch.object(main, "get_firebase_admin_app", return_value=self.admin_app),
+            patch.object(
+                main.firebase_auth,
+                "verify_id_token",
+                side_effect=firebase_auth.RevokedIdTokenError("Token revoked"),
+            ),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                self.authenticate()
+
+        self.assertEqual(raised.exception.status_code, 401)
+        self.assertEqual(raised.exception.detail["code"], "firebase-token-revoked")
+
+    def test_disabled_firebase_user_returns_401(self):
+        with (
+            patch.object(main, "get_firebase_admin_app", return_value=self.admin_app),
+            patch.object(
+                main.firebase_auth,
+                "verify_id_token",
+                side_effect=firebase_auth.UserDisabledError("User disabled"),
+            ),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                self.authenticate()
+
+        self.assertEqual(raised.exception.status_code, 401)
+        self.assertEqual(raised.exception.detail["code"], "firebase-token-invalid")
 
     def test_auth_service_permission_failure_returns_503(self):
         with (

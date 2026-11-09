@@ -1,3 +1,5 @@
+import asyncio
+import http.client
 import json
 import logging
 import os
@@ -6,7 +8,7 @@ import socket
 import threading
 import time
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import wait
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -20,10 +22,29 @@ from firebase_admin import auth as firebase_auth
 from firebase_admin import exceptions as firebase_exceptions
 from fastapi import Depends, FastAPI, HTTPException, Query, Request as FastAPIRequest
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth import exceptions as google_auth_exceptions
 from google.auth.exceptions import DefaultCredentialsError
 from pydantic import BaseModel, Field
+
+from rate_limiting import (
+    JobDiscoveryRateLimitMiddleware,
+    RateLimitConfig,
+    RateLimitStorageError,
+    RateLimiter,
+)
+from provider_controls import (
+    BoundedThreadPoolExecutor,
+    COMPANY_BOARD_MAX_FETCHES_PER_SEARCH,
+    PROVIDER_CONCURRENCY_LEASE_SECONDS,
+    PROVIDER_MAX_CONCURRENT,
+    PROVIDER_MAX_PENDING,
+    PROVIDER_SINGLEFLIGHT_WAIT_SECONDS,
+    PROVIDER_WORKERS,
+    ProviderCapacityExceeded,
+    ProviderConcurrency,
+)
 
 load_dotenv(Path(__file__).with_name(".env"))
 logging.getLogger(__name__).warning(
@@ -32,7 +53,104 @@ logging.getLogger(__name__).warning(
     bool(os.environ.get("YOUTUBE_API_KEY", "").strip()),
 )
 
+
+def _positive_environment_integer(name, default):
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError as error:
+        raise ValueError(f"{name} must be a positive integer.") from error
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer.")
+    return value
+
+
+JOB_DISCOVERY_MAX_REQUEST_BODY_BYTES = _positive_environment_integer(
+    "CAREERSCOUT_JOB_DISCOVERY_MAX_REQUEST_BODY_BYTES",
+    64 * 1024,
+)
+YOUTUBE_MAX_RESPONSE_BYTES = _positive_environment_integer(
+    "CAREERSCOUT_YOUTUBE_MAX_RESPONSE_BYTES",
+    2 * 1024 * 1024,
+)
+YOUTUBE_MAX_PAGE_TOKEN_LENGTH = 512
+
+
+class JobDiscoveryBodySizeLimitMiddleware:
+    def __init__(self, app, max_body_bytes):
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] != "http"
+            or scope.get("path") != "/api/job-discovery"
+            or scope.get("method") != "POST"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", ()))
+        content_length = headers.get(b"content-length")
+        if content_length:
+            try:
+                declared_length = int(content_length)
+            except ValueError:
+                declared_length = None
+            if declared_length is not None and declared_length > self.max_body_bytes:
+                await JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body exceeds the allowed size."},
+                )(scope, receive, send)
+                return
+
+        messages = []
+        total_bytes = 0
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                messages.append(message)
+                break
+            total_bytes += len(message.get("body", b""))
+            if total_bytes > self.max_body_bytes:
+                await JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body exceeds the allowed size."},
+                )(scope, receive, send)
+                return
+            messages.append(message)
+            if not message.get("more_body", False):
+                break
+
+        remaining_messages = iter(messages)
+
+        async def replay_receive():
+            return next(remaining_messages, None) or await receive()
+
+        await self.app(scope, replay_receive, send)
+
+
+rate_limit_config = RateLimitConfig.from_environment()
+rate_limiter = RateLimiter(rate_limit_config)
+provider_concurrency = ProviderConcurrency(
+    storage=rate_limit_config.storage,
+    redis_url=rate_limit_config.redis_url,
+    max_concurrent=PROVIDER_MAX_CONCURRENT,
+    lease_seconds=PROVIDER_CONCURRENCY_LEASE_SECONDS,
+)
+provider_executor = BoundedThreadPoolExecutor(
+    max_workers=PROVIDER_WORKERS,
+    max_pending=PROVIDER_MAX_PENDING,
+)
 app = FastAPI(title="CareerScout AI API")
+app.add_middleware(
+    JobDiscoveryBodySizeLimitMiddleware,
+    max_body_bytes=JOB_DISCOVERY_MAX_REQUEST_BODY_BYTES,
+)
+app.add_middleware(
+    JobDiscoveryRateLimitMiddleware,
+    limiter=rate_limiter,
+    config=rate_limit_config,
+)
 additional_cors_origins = [
     origin.strip().rstrip("/")
     for origin in os.environ.get("CAREERSCOUT_ALLOWED_ORIGINS", "").split(",")
@@ -51,6 +169,29 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 bearer_scheme = HTTPBearer(auto_error=False)
+
+
+@app.on_event("startup")
+async def startup_rate_limiter():
+    try:
+        await rate_limiter.startup()
+        await asyncio.to_thread(provider_concurrency.startup)
+    except Exception:
+        try:
+            await rate_limiter.shutdown()
+        finally:
+            await asyncio.to_thread(provider_concurrency.shutdown)
+        raise
+
+
+@app.on_event("shutdown")
+async def shutdown_rate_limiter():
+    try:
+        await rate_limiter.shutdown()
+    finally:
+        await asyncio.to_thread(provider_concurrency.shutdown)
+
+
 YOUTUBE_LANGUAGES = {
     "en": "English",
     "kn": "Kannada",
@@ -81,6 +222,77 @@ COMPANY_BOARD_TIMEOUT_SECONDS = 5
 COMPANY_BOARD_MAX_CONFIGS = 12
 _company_board_cache = {}
 _company_board_cache_lock = threading.Lock()
+JOB_DISCOVERY_DEADLINE_SECONDS = _positive_environment_integer(
+    "CAREERSCOUT_JOB_DISCOVERY_DEADLINE_SECONDS",
+    15,
+)
+JOB_DISCOVERY_STALE_CACHE_MAX_AGE_SECONDS = _positive_environment_integer(
+    "CAREERSCOUT_JOB_DISCOVERY_STALE_CACHE_MAX_AGE_SECONDS",
+    24 * 60 * 60,
+)
+
+
+def _cache_entry_within_max_age(fetched_at):
+    if not isinstance(fetched_at, str) or not fetched_at:
+        return False
+    try:
+        fetched_datetime = datetime.fromisoformat(fetched_at)
+    except ValueError:
+        return False
+    if fetched_datetime.tzinfo is None:
+        fetched_datetime = fetched_datetime.replace(tzinfo=timezone.utc)
+    age_seconds = max(
+        0.0,
+        (datetime.now(timezone.utc) - fetched_datetime).total_seconds(),
+    )
+    return age_seconds <= JOB_DISCOVERY_STALE_CACHE_MAX_AGE_SECONDS
+
+
+def _stale_provider_cache(provider_name, keyword="", config=None):
+    if provider_name == "Remotive":
+        if not _job_cache_lock.acquire(blocking=False):
+            return None
+        try:
+            cached = dict(_job_cache)
+        finally:
+            _job_cache_lock.release()
+    elif provider_name == "Jobicy":
+        cache_key = keyword.strip().casefold() if isinstance(keyword, str) else ""
+        if not _jobicy_cache_lock.acquire(blocking=False):
+            return None
+        try:
+            cached = _jobicy_cache.get(cache_key)
+            cached = dict(cached) if cached else None
+        finally:
+            _jobicy_cache_lock.release()
+    elif provider_name in {"Greenhouse", "Lever", "Ashby"} and config:
+        provider = provider_name.casefold()
+        board = config.get("boards", {}).get(provider)
+        if not board:
+            return None
+        company_identity = ":".join((
+            _normalize_company_name(config.get("normalizedName", "")),
+            _normalize_company_name(config.get("company", "")),
+        ))
+        cache_key = f"{provider}:{board.casefold()}:{company_identity}"
+        if not _company_board_cache_lock.acquire(blocking=False):
+            return None
+        try:
+            cached = _company_board_cache.get(cache_key)
+            cached = dict(cached) if cached else None
+        finally:
+            _company_board_cache_lock.release()
+    else:
+        return None
+
+    if (
+        not cached
+        or not isinstance(cached.get("jobs"), list)
+        or not cached["jobs"]
+        or not _cache_entry_within_max_age(cached.get("fetched_at"))
+    ):
+        return None
+    return cached["jobs"], cached["fetched_at"]
 
 
 class JobDiscoverySearchRequest(BaseModel):
@@ -261,8 +473,13 @@ def _get_remotive_jobs():
             },
         )
         try:
-            with urlopen(request, timeout=10) as response:
-                body = response.read(REMOTIVE_MAX_RESPONSE_BYTES + 1)
+            with provider_concurrency.permit() as lease:
+                with urlopen(request, timeout=10) as response:
+                    body = _read_provider_response(
+                        response,
+                        REMOTIVE_MAX_RESPONSE_BYTES,
+                        lease_guards=(lease,),
+                    )
         except HTTPError as error:
             logging.getLogger(__name__).warning(
                 "Remotive job search failed: status=%s", error.code
@@ -553,7 +770,12 @@ def _get_company_board_configs():
     return configs
 
 
-def _provider_json(url, source, max_response_bytes=REMOTIVE_MAX_RESPONSE_BYTES):
+def _provider_json(
+    url,
+    source,
+    max_response_bytes=REMOTIVE_MAX_RESPONSE_BYTES,
+    lease_guard=None,
+):
     request = URLRequest(
         url,
         headers={
@@ -562,8 +784,15 @@ def _provider_json(url, source, max_response_bytes=REMOTIVE_MAX_RESPONSE_BYTES):
         },
     )
     try:
-        with urlopen(request, timeout=COMPANY_BOARD_TIMEOUT_SECONDS) as response:
-            body = response.read(max_response_bytes + 1)
+        with provider_concurrency.permit() as lease:
+            with urlopen(request, timeout=COMPANY_BOARD_TIMEOUT_SECONDS) as response:
+                body = _read_provider_response(
+                    response,
+                    max_response_bytes,
+                    lease_guards=tuple(
+                        guard for guard in (lease, lease_guard) if guard is not None
+                    ),
+                )
     except (HTTPError, URLError, TimeoutError, OSError) as error:
         logging.getLogger(__name__).warning(
             "%s job source failed: exception_type=%s",
@@ -577,6 +806,27 @@ def _provider_json(url, source, max_response_bytes=REMOTIVE_MAX_RESPONSE_BYTES):
         return json.loads(body)
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise ValueError(f"{source} returned invalid JSON.") from error
+
+
+def _read_provider_response(response, max_response_bytes, lease_guards=()):
+    for lease in lease_guards:
+        lease.ensure_valid()
+    if isinstance(response, http.client.HTTPResponse):
+        body = bytearray()
+        while len(body) <= max_response_bytes:
+            for lease in lease_guards:
+                lease.ensure_valid()
+            chunk = response.read1(min(65536, max_response_bytes + 1 - len(body)))
+            if not chunk:
+                break
+            body.extend(chunk)
+        for lease in lease_guards:
+            lease.ensure_valid()
+        return bytes(body)
+    body = response.read(max_response_bytes + 1)
+    for lease in lease_guards:
+        lease.ensure_valid()
+    return body
 
 
 def _normalize_company_board_job(provider, item, company):
@@ -688,43 +938,96 @@ def _normalize_company_board_job(provider, item, company):
 
 
 def _fetch_company_board(provider, board, company):
-    cache_key = f"{provider}:{board.casefold()}"
+    company_identity = ":".join((
+        _normalize_company_name(company.get("normalizedName", "")),
+        _normalize_company_name(company.get("company", "")),
+    ))
+    cache_key = f"{provider}:{board.casefold()}:{company_identity}"
     now = time.monotonic()
     with _company_board_cache_lock:
         cached = _company_board_cache.get(cache_key)
         if cached and now < cached["expires_at"]:
             return cached["jobs"], cached["fetched_at"], True
 
-    encoded_board = quote(board, safe="")
-    if provider == "greenhouse":
-        url = f"https://boards-api.greenhouse.io/v1/boards/{encoded_board}/jobs?content=true"
-    elif provider == "lever":
-        url = f"https://api.lever.co/v0/postings/{encoded_board}?mode=json"
-    else:
-        url = f"https://api.ashbyhq.com/posting-api/job-board/{encoded_board}?includeCompensation=true"
-    payload = _provider_json(url, provider.title())
-    if provider == "greenhouse":
-        records = payload.get("jobs") if isinstance(payload, dict) else None
-    elif provider == "lever":
-        records = payload
-    else:
-        records = payload.get("jobs") if isinstance(payload, dict) else None
-    if not isinstance(records, list):
-        raise ValueError(f"{provider.title()} returned an invalid job-board response.")
+    with provider_concurrency.singleflight(
+        cache_key,
+        PROVIDER_SINGLEFLIGHT_WAIT_SECONDS,
+    ) as singleflight_lease:
+        now = time.monotonic()
+        with _company_board_cache_lock:
+            cached = _company_board_cache.get(cache_key)
+            if cached and now < cached["expires_at"]:
+                return cached["jobs"], cached["fetched_at"], True
 
-    jobs = [
-        job
-        for job in (_normalize_company_board_job(provider, item, company) for item in records[:COMPANY_BOARD_MAX_RESULTS])
-        if job is not None
-    ]
-    fetched_at = datetime.now(timezone.utc).isoformat()
-    with _company_board_cache_lock:
-        _company_board_cache[cache_key] = {
-            "jobs": jobs,
-            "fetched_at": fetched_at,
-            "expires_at": time.monotonic() + COMPANY_BOARD_CACHE_SECONDS,
-        }
-    return jobs, fetched_at, False
+        shared_cache = provider_concurrency.get_shared_board_cache(cache_key)
+        if shared_cache is not None:
+            jobs, fetched_at, expires_at = shared_cache
+            try:
+                fetched_datetime = datetime.fromisoformat(fetched_at)
+                if fetched_datetime.tzinfo is None:
+                    fetched_datetime = fetched_datetime.replace(tzinfo=timezone.utc)
+                age = max(
+                    0.0,
+                    (datetime.now(timezone.utc) - fetched_datetime).total_seconds(),
+                )
+            except ValueError:
+                age = COMPANY_BOARD_CACHE_SECONDS
+            remaining = min(
+                expires_at - time.time(),
+                COMPANY_BOARD_CACHE_SECONDS - age,
+            )
+            if remaining > 0:
+                singleflight_lease.ensure_valid()
+                with _company_board_cache_lock:
+                    _company_board_cache[cache_key] = {
+                        "jobs": jobs,
+                        "fetched_at": fetched_at,
+                        "expires_at": time.monotonic() + remaining,
+                    }
+                return jobs, fetched_at, True
+
+        encoded_board = quote(board, safe="")
+        if provider == "greenhouse":
+            url = f"https://boards-api.greenhouse.io/v1/boards/{encoded_board}/jobs?content=true"
+        elif provider == "lever":
+            url = f"https://api.lever.co/v0/postings/{encoded_board}?mode=json"
+        else:
+            url = f"https://api.ashbyhq.com/posting-api/job-board/{encoded_board}?includeCompensation=true"
+        payload = _provider_json(
+            url,
+            provider.title(),
+            lease_guard=singleflight_lease,
+        )
+        if provider == "greenhouse":
+            records = payload.get("jobs") if isinstance(payload, dict) else None
+        elif provider == "lever":
+            records = payload
+        else:
+            records = payload.get("jobs") if isinstance(payload, dict) else None
+        if not isinstance(records, list):
+            raise ValueError(f"{provider.title()} returned an invalid job-board response.")
+
+        jobs = [
+            job
+            for job in (_normalize_company_board_job(provider, item, company) for item in records[:COMPANY_BOARD_MAX_RESULTS])
+            if job is not None
+        ]
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        singleflight_lease.ensure_valid()
+        provider_concurrency.set_shared_board_cache(
+            cache_key,
+            jobs,
+            fetched_at,
+            COMPANY_BOARD_CACHE_SECONDS,
+        )
+        singleflight_lease.ensure_valid()
+        with _company_board_cache_lock:
+            _company_board_cache[cache_key] = {
+                "jobs": jobs,
+                "fetched_at": fetched_at,
+                "expires_at": time.monotonic() + COMPANY_BOARD_CACHE_SECONDS,
+            }
+        return jobs, fetched_at, False
 
 
 def _fetch_board_config(config):
@@ -1742,6 +2045,31 @@ def require_firebase_user(
     return user_id
 
 
+async def require_rate_limited_learning_user(
+    user_id: str = Depends(require_firebase_user),
+):
+    try:
+        retry_after = await rate_limiter.check(
+            "learning-resources-user",
+            user_id,
+            rate_limit_config.learning_user_limit,
+            rate_limit_config.learning_user_window_seconds,
+        )
+    except RateLimitStorageError as error:
+        logging.getLogger(__name__).exception("Learning-resource rate-limit storage failed.")
+        raise HTTPException(
+            status_code=503,
+            detail="Rate limiting is temporarily unavailable.",
+        ) from error
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please retry later.",
+            headers={"Retry-After": str(retry_after)},
+        )
+    return user_id
+
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to the CareerScout AI API!"}
@@ -1767,6 +2095,7 @@ def get_job_discovery(
     remote_only: bool = Query(default=False, alias="remoteOnly"),
     limit: int = Query(default=100, ge=1, le=JOB_DISCOVERY_MAX_RESULTS),
 ):
+    deadline = time.monotonic() + JOB_DISCOVERY_DEADLINE_SECONDS
     selected_role_terms = []
     for term in role_terms or []:
         normalized_term = term.strip()
@@ -1814,6 +2143,13 @@ def get_job_discovery(
         board_configs = [selected_company_config] if selected_company_config else []
     truncated_board_list = len(board_configs) > COMPANY_BOARD_MAX_CONFIGS
     board_configs = board_configs[:COMPANY_BOARD_MAX_CONFIGS]
+    board_fetches = [
+        (provider, config)
+        for config in board_configs
+        for provider in config["boards"]
+    ]
+    truncated_board_fetches = len(board_fetches) > COMPANY_BOARD_MAX_FETCHES_PER_SEARCH
+    board_fetches = board_fetches[:COMPANY_BOARD_MAX_FETCHES_PER_SEARCH]
 
     provider_status = []
     provider_errors = []
@@ -1821,57 +2157,128 @@ def get_job_discovery(
     provider_fetched_at = []
     provider_cache_flags = []
     tasks = {}
-    with ThreadPoolExecutor(max_workers=7) as executor:
-        for provider_name, adapter in JOB_DISCOVERY_PROVIDERS.items():
-            tasks[executor.submit(adapter, (query or "").strip())] = (provider_name, None)
-        for config in board_configs:
-            for provider in config["boards"]:
-                label = {
-                    "greenhouse": "Greenhouse",
-                    "lever": "Lever",
-                    "ashby": "Ashby",
-                }[provider]
-                tasks[executor.submit(
-                    _fetch_company_board,
-                    provider,
-                    config["boards"][provider],
-                    config,
-                )] = (label, config)
 
-        for future in as_completed(tasks):
-            provider_name, config = tasks[future]
-            try:
-                result = future.result()
-                jobs, fetched_at, cached = result[:3]
-                warnings = result[3] if len(result) > 3 else []
+    def submit_provider(provider_name, function, *args, config=None):
+        try:
+            future = provider_executor.submit(function, *args)
+        except ProviderCapacityExceeded:
+            provider_status.append({"name": provider_name, "status": "error"})
+            provider_errors.append(
+                f"{provider_name} job listings were skipped because provider capacity is exhausted."
+            )
+            return
+        tasks[future] = (provider_name, config)
+
+    for provider_name, adapter in JOB_DISCOVERY_PROVIDERS.items():
+        submit_provider(provider_name, adapter, (query or "").strip())
+    for provider, config in board_fetches:
+        label = {
+            "greenhouse": "Greenhouse",
+            "lever": "Lever",
+            "ashby": "Ashby",
+        }[provider]
+        submit_provider(
+            label,
+            _fetch_company_board,
+            provider,
+            config["boards"][provider],
+            config,
+            config=config,
+        )
+
+    completed_tasks, pending_tasks = wait(
+        tasks,
+        timeout=max(0.0, deadline - time.monotonic()),
+    )
+    for future in tasks:
+        if future not in completed_tasks:
+            continue
+        provider_name, config = tasks[future]
+        try:
+            result = future.result()
+            jobs, fetched_at, cached = result[:3]
+            warnings = result[3] if len(result) > 3 else []
+            provider_jobs.extend(jobs)
+            if fetched_at:
+                provider_fetched_at.append(fetched_at)
+            provider_cache_flags.append(cached)
+            provider_status.append({
+                "name": provider_name,
+                "status": "partial" if warnings else "ok" if jobs else "empty",
+                "listingCount": len(jobs),
+            })
+            provider_errors.extend(warnings)
+        except Exception as error:
+            if isinstance(error, HTTPException):
+                message = error.detail
+            elif isinstance(error, ValueError):
+                message = str(error)
+            elif isinstance(error, ProviderCapacityExceeded):
+                message = f"{provider_name} job listings were skipped because provider capacity is exhausted."
+            else:
+                logging.getLogger(__name__).warning(
+                    "%s job source failed: exception_type=%s",
+                    provider_name,
+                    _safe_exception_type(error),
+                )
+                message = f"{provider_name} job listings are temporarily unavailable."
+            fallback = _stale_provider_cache(
+                provider_name,
+                (query or "").strip(),
+                config,
+            )
+            if fallback:
+                jobs, cached_fetched_at = fallback
                 provider_jobs.extend(jobs)
-                if fetched_at:
-                    provider_fetched_at.append(fetched_at)
-                provider_cache_flags.append(cached)
+                provider_fetched_at.append(cached_fetched_at)
+                provider_cache_flags.append(True)
                 provider_status.append({
                     "name": provider_name,
-                    "status": "partial" if warnings else "ok" if jobs else "empty",
+                    "status": "partial",
                     "listingCount": len(jobs),
                 })
-                provider_errors.extend(warnings)
-            except Exception as error:
-                if isinstance(error, HTTPException):
-                    message = error.detail
-                elif isinstance(error, ValueError):
-                    message = str(error)
-                else:
-                    logging.getLogger(__name__).warning(
-                        "%s job source failed: exception_type=%s",
-                        provider_name,
-                        _safe_exception_type(error),
-                    )
-                    message = f"{provider_name} job listings are temporarily unavailable."
+                provider_errors.append(f"{message} Serving previously cached listings.")
+            else:
                 provider_status.append({"name": provider_name, "status": "error"})
                 provider_errors.append(message)
+
+    for future in pending_tasks:
+        provider_name, config = tasks[future]
+        future.cancel()
+        fallback = _stale_provider_cache(
+            provider_name,
+            (query or "").strip(),
+            config,
+        )
+        timeout_message = (
+            f"{provider_name} job listings exceeded the "
+            f"{JOB_DISCOVERY_DEADLINE_SECONDS}-second request deadline."
+        )
+        if fallback:
+            jobs, cached_fetched_at = fallback
+            provider_jobs.extend(jobs)
+            provider_fetched_at.append(cached_fetched_at)
+            provider_cache_flags.append(True)
+            provider_status.append({
+                "name": provider_name,
+                "status": "partial",
+                "listingCount": len(jobs),
+            })
+            provider_errors.append(
+                f"{timeout_message} Serving previously cached listings."
+            )
+        else:
+            provider_status.append({"name": provider_name, "status": "error"})
+            provider_errors.append(timeout_message)
 
     if truncated_board_list:
         provider_errors.append(
             f"Only the first {COMPANY_BOARD_MAX_CONFIGS} configured company boards were searched."
+        )
+    if truncated_board_fetches:
+        provider_errors.append(
+            "Only the first "
+            f"{COMPANY_BOARD_MAX_FETCHES_PER_SEARCH} configured company board feeds were searched."
         )
 
     if not provider_status or all(item["status"] == "error" for item in provider_status):
@@ -2012,8 +2419,12 @@ def post_job_discovery(filters: JobDiscoverySearchRequest):
 def get_learning_resources(
     skill: str = Query(min_length=1, max_length=120),
     language: str = Query(min_length=2, max_length=2),
-    page_token: str | None = Query(default=None, alias="pageToken"),
-    _user_id: str = Depends(require_firebase_user),
+    page_token: str | None = Query(
+        default=None,
+        alias="pageToken",
+        max_length=YOUTUBE_MAX_PAGE_TOKEN_LENGTH,
+    ),
+    _user_id: str = Depends(require_rate_limited_learning_user),
 ):
     language_code = language.strip().lower()
     language_name = YOUTUBE_LANGUAGES.get(language_code)
@@ -2046,14 +2457,33 @@ def get_learning_resources(
 
     try:
         with urlopen(request, timeout=10) as response:
-            payload = json.loads(response.read())
+            body = response.read(YOUTUBE_MAX_RESPONSE_BYTES + 1)
+        if not isinstance(body, bytes):
+            raise ValueError("YouTube returned a non-byte response body.")
+        if len(body) > YOUTUBE_MAX_RESPONSE_BYTES:
+            raise ValueError("YouTube response exceeded the configured size limit.")
+        payload = json.loads(body.decode("utf-8"))
+        _validate_youtube_search_payload(payload)
     except HTTPError as error:
         status_code = 429 if error.code == 429 else 502
         raise HTTPException(
             status_code=status_code,
             detail="YouTube learning resources could not be loaded. Check the YouTube API configuration and quota.",
         ) from error
-    except (URLError, TimeoutError, json.JSONDecodeError) as error:
+    except (
+        URLError,
+        TimeoutError,
+        OSError,
+        http.client.HTTPException,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as error:
+        logging.getLogger(__name__).warning(
+            "YouTube learning resources failed: exception_type=%s",
+            _safe_exception_type(error),
+        )
         raise HTTPException(
             status_code=502,
             detail="YouTube learning resources are temporarily unavailable.",
@@ -2084,3 +2514,35 @@ def get_learning_resources(
         "videos": videos,
         "nextPageToken": next_page_token if isinstance(next_page_token, str) and next_page_token else None,
     }
+
+
+def _validate_youtube_search_payload(payload):
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        raise ValueError("YouTube returned an invalid search response.")
+
+    if "nextPageToken" in payload and not isinstance(payload["nextPageToken"], str):
+        raise ValueError("YouTube returned an invalid pagination token.")
+
+    for item in payload["items"]:
+        if not isinstance(item, dict):
+            raise ValueError("YouTube returned an invalid video item.")
+        video_data = item.get("id")
+        if not isinstance(video_data, dict) or not isinstance(video_data.get("videoId"), str):
+            raise ValueError("YouTube returned an invalid video identifier.")
+
+        snippet = item.get("snippet")
+        if not isinstance(snippet, dict):
+            raise ValueError("YouTube returned an invalid video snippet.")
+        for field in ("title", "channelTitle"):
+            if not isinstance(snippet.get(field), str):
+                raise ValueError(f"YouTube returned an invalid {field} field.")
+
+        if "thumbnails" in snippet and not isinstance(snippet["thumbnails"], dict):
+            raise ValueError("YouTube returned invalid thumbnails.")
+        thumbnails = snippet.get("thumbnails", {})
+        for size in ("high", "medium", "default"):
+            if size in thumbnails and not isinstance(thumbnails[size], dict):
+                raise ValueError("YouTube returned an invalid thumbnail.")
+            image = thumbnails.get(size, {})
+            if "url" in image and not isinstance(image["url"], str):
+                raise ValueError("YouTube returned an invalid thumbnail URL.")

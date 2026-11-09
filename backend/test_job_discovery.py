@@ -1,6 +1,10 @@
 import json
 import os
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -8,6 +12,9 @@ from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
+
+os.environ["CAREERSCOUT_ENV"] = "test"
+os.environ["RATE_LIMIT_STORAGE"] = "memory"
 
 import main
 
@@ -263,6 +270,219 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
             {"Remotive", "Jobicy"},
         )
         self.assertNotIn("jobs", response.json())
+
+    def test_expired_provider_cache_is_used_after_refresh_failure_within_maximum_age(self):
+        listing = main._normalize_remotive_job(self.listing())
+        fetched_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        main._job_cache.update(
+            jobs=[listing],
+            fetched_at=fetched_at,
+            expires_at=0.0,
+        )
+
+        def fail_refresh(_keyword):
+            raise TimeoutError("provider timed out")
+
+        with (
+            patch.object(main, "JOB_DISCOVERY_STALE_CACHE_MAX_AGE_SECONDS", 24 * 60 * 60),
+            patch.object(main, "JOB_DISCOVERY_PROVIDERS", {
+                "Remotive": fail_refresh,
+                "Jobicy": lambda _keyword: ([], fetched_at, False, []),
+            }),
+        ):
+            response = self.client.get("/api/job-discovery")
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual([job["title"] for job in result["jobs"]], ["Python Engineer"])
+        self.assertTrue(result["partial"])
+        self.assertEqual(result["providerStatus"][0]["status"], "partial")
+        self.assertTrue(any("cached listings" in error for error in result["providerErrors"]))
+        self.assertEqual(result["fetchedAt"], fetched_at)
+
+    def test_stale_cache_beyond_maximum_age_is_not_returned(self):
+        fetched_at = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+        main._job_cache.update(
+            jobs=[main._normalize_remotive_job(self.listing())],
+            fetched_at=fetched_at,
+            expires_at=0.0,
+        )
+
+        def fail_refresh(_keyword):
+            raise TimeoutError("provider timed out")
+
+        with (
+            patch.object(main, "JOB_DISCOVERY_STALE_CACHE_MAX_AGE_SECONDS", 60),
+            patch.object(main, "JOB_DISCOVERY_PROVIDERS", {
+                "Remotive": fail_refresh,
+                "Jobicy": fail_refresh,
+            }),
+        ):
+            response = self.client.get("/api/job-discovery")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("jobs", response.json())
+        self.assertEqual(
+            [status["status"] for status in response.json()["detail"]["providerStatus"]],
+            ["error", "error"],
+        )
+
+    def test_jobicy_stale_cache_is_used_for_the_matching_search_after_failure(self):
+        listing = main._normalize_jobicy_job(self.jobicy_listing())
+        fetched_at = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        main._jobicy_cache["python"] = {
+            "jobs": [listing],
+            "fetched_at": fetched_at,
+            "expires_at": 0.0,
+            "warnings": [],
+        }
+
+        def fail_refresh(_keyword):
+            raise ValueError("Jobicy is temporarily unavailable.")
+
+        with (
+            patch.object(main, "JOB_DISCOVERY_PROVIDERS", {
+                "Remotive": lambda _keyword: ([], fetched_at, False),
+                "Jobicy": fail_refresh,
+            }),
+        ):
+            response = self.client.get("/api/job-discovery?query=python")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["jobs"][0]["source"], "Jobicy")
+        self.assertTrue(response.json()["partial"])
+        self.assertTrue(any("cached listings" in error for error in response.json()["providerErrors"]))
+
+    def test_company_board_stale_cache_is_used_after_refresh_failure(self):
+        fetched_at = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+        config = {
+            "Example Co": {
+                "boards": {"lever": "example-board"},
+            },
+        }
+        board_listing = main._normalize_remotive_job(self.listing())
+        board_listing.update(
+            source="Lever",
+            sourceType="official_company_board",
+            sourceLabel="Official Lever company board",
+        )
+        cache_key = "lever:example-board:example co:example co"
+        main._company_board_cache[cache_key] = {
+            "jobs": [board_listing],
+            "fetched_at": fetched_at,
+            "expires_at": 0.0,
+        }
+
+        with (
+            patch.dict(os.environ, {"COMPANY_JOB_BOARDS_JSON": json.dumps(config)}),
+            patch.object(main, "JOB_DISCOVERY_PROVIDERS", {
+                "Remotive": lambda _keyword: ([], fetched_at, False),
+                "Jobicy": lambda _keyword: ([], fetched_at, False, []),
+            }),
+            patch.object(
+                main,
+                "_fetch_company_board",
+                side_effect=ValueError("Lever is temporarily unavailable."),
+            ),
+        ):
+            response = self.client.get(
+                "/api/job-discovery?mode=company&company=Example%20Co"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["jobs"][0]["source"], "Lever")
+        self.assertTrue(response.json()["partial"])
+        self.assertTrue(any("cached listings" in error for error in response.json()["providerErrors"]))
+
+    def test_request_deadline_returns_successful_provider_results_and_marks_slow_provider(self):
+        listing = main._normalize_remotive_job(self.listing())
+        slow_provider_started = threading.Event()
+        release_slow_provider = threading.Event()
+
+        def slow_provider(_keyword):
+            slow_provider_started.set()
+            release_slow_provider.wait(2)
+            return [], "", False, []
+
+        try:
+            with (
+                patch.object(main, "JOB_DISCOVERY_DEADLINE_SECONDS", 0.1),
+                patch.object(main, "JOB_DISCOVERY_PROVIDERS", {
+                    "Remotive": lambda _keyword: (
+                        [listing],
+                        datetime.now(timezone.utc).isoformat(),
+                        False,
+                    ),
+                    "Jobicy": slow_provider,
+                }),
+            ):
+                started = time.monotonic()
+                response = self.client.get("/api/job-discovery")
+                elapsed = time.monotonic() - started
+                self.assertTrue(slow_provider_started.wait(0.5))
+        finally:
+            release_slow_provider.set()
+
+        self.assertLess(elapsed, 0.75)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([job["title"] for job in response.json()["jobs"]], ["Python Engineer"])
+        self.assertTrue(response.json()["partial"])
+        self.assertTrue(any("request deadline" in error for error in response.json()["providerErrors"]))
+
+    def test_concurrent_job_discovery_requests_complete_with_independent_provider_results(self):
+        barrier = threading.Barrier(2)
+        listing = main._normalize_remotive_job(self.listing())
+        fetched_at = datetime.now(timezone.utc).isoformat()
+
+        def provider(_keyword):
+            barrier.wait(timeout=3)
+            return [listing], fetched_at, False
+
+        def request(client_ip):
+            with TestClient(main.app, client=(client_ip, 1234)) as client:
+                return client.get("/api/job-discovery")
+
+        with patch.object(main, "JOB_DISCOVERY_PROVIDERS", {"Concurrent": provider}):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                responses = list(executor.map(
+                    request,
+                    ("198.51.100.31", "198.51.100.32"),
+                ))
+
+        self.assertEqual([response.status_code for response in responses], [200, 200])
+        self.assertEqual(
+            [[job["title"] for job in response.json()["jobs"]] for response in responses],
+            [["Python Engineer"], ["Python Engineer"]],
+        )
+        self.assertTrue(all(response.json()["sources"] == ["Concurrent"] for response in responses))
+
+    def test_deadline_without_completed_usable_providers_returns_service_unavailable(self):
+        slow_provider_started = threading.Event()
+        release_slow_provider = threading.Event()
+
+        def slow_provider(_keyword):
+            slow_provider_started.set()
+            release_slow_provider.wait(2)
+            return [], "", False, []
+
+        try:
+            with (
+                patch.object(main, "JOB_DISCOVERY_DEADLINE_SECONDS", 0.1),
+                patch.object(main, "JOB_DISCOVERY_PROVIDERS", {
+                    "Remotive": slow_provider,
+                    "Jobicy": slow_provider,
+                }),
+            ):
+                response = self.client.get("/api/job-discovery")
+                self.assertTrue(slow_provider_started.wait(0.5))
+        finally:
+            release_slow_provider.set()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue(all(
+            status["status"] == "error"
+            for status in response.json()["detail"]["providerStatus"]
+        ))
 
     def test_empty_provider_response_is_a_valid_empty_result(self):
         with patch.object(main, "urlopen", return_value=self.response({"jobs": []})):
@@ -1066,7 +1286,7 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
         listing = main._normalize_remotive_job(self.listing())
         with patch.dict(os.environ, {"COMPANY_JOB_BOARDS_JSON": ""}):
             with patch.object(main, "_get_remotive_jobs", return_value=([listing], "2026-10-25T00:00:00+00:00", True)):
-                with patch.object(main, "_get_jobicy_jobs", side_effect=ValueError("Jobicy is temporarily unavailable.")):
+                with patch.object(main, "_get_jobicy_jobs", side_effect=TimeoutError("provider timed out")):
                     partial = self.client.get("/api/job-discovery?mode=company&company=Example%20Co")
         self.assertEqual(partial.status_code, 200)
         self.assertTrue(partial.json()["partial"])

@@ -4,6 +4,10 @@ import {
   isCurrentLearningResourceRequest,
   requestLearningResources,
 } from '../src/learningResourcesApi.js';
+import {
+  MalformedApiResponseError,
+  RequestCancelledError,
+} from '../src/apiRequest.js';
 
 function response(status, body) {
   return {
@@ -178,6 +182,51 @@ test('pagination continues to pass the requested skill and page token through th
 
   assert.equal(requestedUrl.searchParams.get('skill'), 'Python');
   assert.equal(requestedUrl.searchParams.get('pageToken'), 'next-page-token');
+});
+
+test('malformed learning-resource JSON is rejected rather than returned as an empty result', async () => {
+  const user = { async getIdToken() { return 'id-token'; } };
+  await assert.rejects(
+    requestLearningResources(
+      'http://localhost:8000',
+      'Python',
+      'en',
+      user,
+      null,
+      async () => ({
+        status: 200,
+        async json() { throw new SyntaxError('invalid JSON'); },
+      }),
+    ),
+    MalformedApiResponseError,
+  );
+});
+
+test('learning-resource requests keep the bearer token and honor caller cancellation', async () => {
+  const controller = new AbortController();
+  const user = { async getIdToken() { return 'id-token'; } };
+  let requestOptions;
+  let markStarted;
+  const started = new Promise((resolve) => { markStarted = resolve; });
+  const request = requestLearningResources(
+    'http://localhost:8000',
+    'Python',
+    'en',
+    user,
+    null,
+    async (_url, options) => {
+      requestOptions = options;
+      markStarted();
+      return new Promise(() => {});
+    },
+    { signal: controller.signal, timeoutMs: 1_000 },
+  );
+
+  await started;
+  controller.abort();
+  await assert.rejects(request, RequestCancelledError);
+  assert.match(requestOptions.headers.Authorization, /^Bearer /);
+  assert.equal(requestOptions.signal.aborted, true);
 });
 
 test('stale focused-skill results are rejected after skill, user, or generation changes', () => {

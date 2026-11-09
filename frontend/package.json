@@ -6,8 +6,16 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "postbuild": "node scripts/check-bundle-size.mjs",
+    "check:bundle": "node scripts/check-bundle-size.mjs",
     "preview": "vite preview",
-    "test": "node --test"
+    "test": "node --test",
+    "test:e2e": "firebase emulators:exec --config ../firebase.json --project demo-careerscout-ai --only auth,firestore,storage \"playwright test\"",
+    "test:e2e:report": "playwright show-report",
+    "dev:emulator": "vite --mode emulator",
+    "emulators:start": "firebase emulators:start --config ../firebase.json --project demo-careerscout-ai --only auth,firestore,storage",
+    "test:emulator": "firebase emulators:exec --config ../firebase.json --project demo-careerscout-ai --only auth,firestore,storage \"npm run test:emulator:run\"",
+    "test:emulator:run": "node --test emulator-tests/firebaseEmulator.integration.js"
   },
   "dependencies": {
     "firebase": "^13.0.0",
@@ -17,7 +25,11 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "@playwright/test": "^1.65.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "axe-core": "^4.14.0",
+    "firebase-tools": "^15.35.0",
     "vite": "6.4.5"
   },
   "overrides": {

@@ -16,11 +16,20 @@ __pycache__/
 .env
 .env.*
 !.env.example
+!.env.emulator.example
 
 # Test and coverage output
 .coverage
 htmlcov/
 .pytest_cache/
+
+# Playwright output
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
+frontend/firebase-debug.log
+frontend/firestore-debug.log
+frontend/ui-debug.log
 
 # Editors and operating systems
 .vscode/
