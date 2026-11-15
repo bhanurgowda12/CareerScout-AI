@@ -74,7 +74,12 @@ function createEmptyProfile() {
 function normalizeProfile(value) {
   const source = value && typeof value === 'object' ? value : {};
   try {
+    const profileFields = { ...source };
+    delete profileFields.savedAt;
+    delete profileFields.versionId;
+    delete profileFields.changeType;
     return {
+      ...profileFields,
       username: typeof source.username === 'string' ? source.username : '',
       preferredWorkAreas: Array.isArray(source.preferredWorkAreas) ? source.preferredWorkAreas.filter((item) => typeof item === 'string') : [],
       preferredIndustries: Array.isArray(source.preferredIndustries) ? source.preferredIndustries.filter((item) => typeof item === 'string') : [],
@@ -211,6 +216,12 @@ function formatHistoryDate(timestamp) {
   return timestamp.toDate().toLocaleString();
 }
 
+function getHistoryChangeLabel(changeType) {
+  if (changeType === 'before_restore') return 'Before restore';
+  if (changeType === 'before_pathway_update') return 'Before pathway update';
+  return 'Before profile update';
+}
+
 function getProjectLinks(project) {
   const candidates = [
     { label: 'GitHub', value: project?.githubUrl || project?.github },
@@ -252,7 +263,7 @@ function FormField({ id, label, error, children }) {
   );
 }
 
-function StudentProfile({ user, onRequestSignIn }) {
+function StudentProfile({ user, page = 'profile', onNavigate = () => {}, onRequestSignIn }) {
   const [profile, setProfile] = useState(createEmptyProfile);
   const [savedProfile, setSavedProfile] = useState(createEmptyProfile);
   const [avatarUrl, setAvatarUrl] = useState('');
@@ -277,6 +288,7 @@ function StudentProfile({ user, onRequestSignIn }) {
   const [historyError, setHistoryError] = useState('');
   const [selectedHistory, setSelectedHistory] = useState(null);
   const [restoringVersionId, setRestoringVersionId] = useState('');
+  const [deletingVersionId, setDeletingVersionId] = useState('');
   const [localProfile, setLocalProfile] = useState(null);
   const [loadedUid, setLoadedUid] = useState(null);
   const [loadVersion, setLoadVersion] = useState(0);
@@ -342,6 +354,7 @@ function StudentProfile({ user, onRequestSignIn }) {
     setLoadedUid(null);
     setSaving(false);
     setDeleting(false);
+    setDeletingVersionId('');
     setImporting(false);
 
     if (!canUseProfile(user) || !firestore || auth?.currentUser?.uid !== uid) {
@@ -688,6 +701,7 @@ function StudentProfile({ user, onRequestSignIn }) {
           message: `${avatarChange === 'remove' ? 'Your profile photo was removed and your profile was saved.' : avatarChange === 'upload' ? 'Your profile photo and profile changes were saved.' : 'Your profile has been saved to your account.'}${cleanupWarning}`,
         });
         await refreshProfileHistory();
+        onNavigate('profile');
       }
     } catch (error) {
       let cleanupWarning = '';
@@ -884,7 +898,18 @@ function StudentProfile({ user, onRequestSignIn }) {
           });
         }
 
-        const restored = normalizeProfile(versionSnapshot.data());
+        const versionData = versionSnapshot.data();
+        const restored = normalizeProfile(versionData);
+        if (currentSnapshot.exists()) {
+          Object.entries(currentSnapshot.data()).forEach(([field, value]) => {
+            if (
+              !Object.prototype.hasOwnProperty.call(versionData, field)
+              && !['savedAt', 'versionId', 'changeType'].includes(field)
+            ) {
+              restored[field] = value;
+            }
+          });
+        }
         if (!restored.username && currentSnapshot.exists()) {
           const currentUsername = currentSnapshot.data().username;
           restored.username = typeof currentUsername === 'string' ? currentUsername : '';
@@ -924,6 +949,114 @@ function StudentProfile({ user, onRequestSignIn }) {
     }
   }
 
+  async function deleteHistoryVersion(version) {
+    if (!isCurrentUser() || loadedUid !== user.uid || !version?.versionId) {
+      setFeedback({ type: 'error', message: 'Sign in with a verified account before deleting a profile version.' });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete the profile snapshot from ${formatHistoryDate(version.savedAt)}? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setDeletingVersionId(version.versionId);
+    setFeedback({ type: '', message: '' });
+    try {
+      const historyCollectionRef = getProfileHistoryCollectionRef(user.uid);
+      const versionRef = doc(historyCollectionRef, version.versionId);
+      const versionSnapshot = await getDoc(versionRef);
+      if (!versionSnapshot.exists()) {
+        throw new Error('The selected profile history version no longer exists. Refresh history and try again.');
+      }
+
+      const avatarPath = versionSnapshot.data().profilePhotoPath;
+      let avatarReferencedBeforeDelete = false;
+      if (isOwnedAvatarPath(avatarPath, user.uid)) {
+        const [currentProfileSnapshot, historySnapshot] = await Promise.all([
+          getDoc(getUserProfileRef(user.uid)),
+          getDocs(historyCollectionRef),
+        ]);
+        avatarReferencedBeforeDelete = Boolean(
+          currentProfileSnapshot.data()?.profilePhotoPath === avatarPath
+          || historySnapshot.docs.some((savedVersion) => (
+            savedVersion.id !== version.versionId
+            && savedVersion.data().profilePhotoPath === avatarPath
+          )),
+        );
+      }
+
+      await deleteDoc(versionRef);
+      if (selectedHistory?.versionId === version.versionId) setSelectedHistory(null);
+
+      let cleanupWarning = '';
+      if (isOwnedAvatarPath(avatarPath, user.uid)) {
+        if (avatarReferencedBeforeDelete || !storage) {
+          cleanupWarning = avatarReferencedBeforeDelete
+            ? ' The photo was kept because the current profile or another snapshot still references it.'
+            : ' The photo was kept because Firebase Storage is not configured.';
+        } else {
+          try {
+            const [currentProfileSnapshot, historySnapshot] = await Promise.all([
+              getDoc(getUserProfileRef(user.uid)),
+              getDocs(historyCollectionRef),
+            ]);
+            const avatarStillReferenced = Boolean(
+              currentProfileSnapshot.data()?.profilePhotoPath === avatarPath
+              || historySnapshot.docs.some((savedVersion) => (
+                savedVersion.data().profilePhotoPath === avatarPath
+              )),
+            );
+            if (avatarStillReferenced) {
+              cleanupWarning = ' The photo was kept because it is still referenced by a profile version.';
+            } else {
+              await deleteObject(storageRef(storage, avatarPath));
+            }
+          } catch (error) {
+            if (error?.code === 'storage/object-not-found') {
+              cleanupWarning = '';
+            } else if (error?.code?.startsWith('storage/')) {
+              cleanupWarning = ' The snapshot was deleted, but its unused photo could not be removed from Storage.';
+            } else {
+              reportFirestoreFailure(
+                'read',
+                'verify profile photo references after history deletion',
+                user,
+                error,
+                `users/${user.uid}/profile and users/${user.uid}/profileHistory`,
+              );
+              cleanupWarning = ' The snapshot was deleted, but the photo was kept because its references could not be verified.';
+            }
+          }
+        }
+      }
+
+      await refreshProfileHistory();
+      if (isCurrentUser()) {
+        setFeedback({
+          type: 'success',
+          message: `The profile snapshot was deleted.${cleanupWarning}`,
+        });
+      }
+    } catch (error) {
+      reportFirestoreFailure(
+        'write',
+        'deleteDoc profile history version',
+        user,
+        error,
+        `users/${user.uid}/profileHistory/${version.versionId}`,
+      );
+      if (isCurrentUser()) {
+        setFeedback({
+          type: 'error',
+          message: error?.message || getProfileErrorMessage(error, 'delete history'),
+        });
+      }
+    } finally {
+      if (isCurrentUser()) setDeletingVersionId('');
+    }
+  }
+
   function retryProfileLoad() {
     setLoadVersion((version) => version + 1);
   }
@@ -940,9 +1073,15 @@ function StudentProfile({ user, onRequestSignIn }) {
     setAvatarPreviewUrl('');
   }
 
+  function cancelEditing() {
+    if (hasUnsavedChanges && !window.confirm('Discard your unsaved profile changes?')) return;
+    discardChanges();
+    onNavigate('profile');
+  }
+
   const isAuthorized = canUseProfile(user) && auth?.currentUser?.uid === user.uid;
   const isLoaded = loadedUid === user?.uid;
-  const isBusy = saving || deleting || importing || Boolean(restoringVersionId);
+  const isBusy = saving || deleting || importing || Boolean(restoringVersionId) || Boolean(deletingVersionId);
   const hasUnsavedChanges = JSON.stringify(profile) !== JSON.stringify(savedProfile) || avatarChange !== 'unchanged';
   const displayName = savedProfile.fullName.trim() || savedProfile.username.trim();
   const displayEducation = [
@@ -951,9 +1090,6 @@ function StudentProfile({ user, onRequestSignIn }) {
     savedProfile.college,
     savedProfile.graduationYear,
   ].filter((value) => value?.trim());
-  const displayInterests = savedProfile.interests.length
-    ? savedProfile.interests
-    : savedProfile.careerInterests;
   const savedLinks = professionalLinkFields
     .map((field) => ({
       ...field,
@@ -969,16 +1105,29 @@ function StudentProfile({ user, onRequestSignIn }) {
     setAvatarImageFailed(false);
   }, [shownAvatarUrl]);
   const profileEssentials = [
-    Boolean(profile.fullName.trim()),
-    Boolean(profile.email.trim()),
-    Boolean(profile.degree.trim()),
-    Boolean(profile.branch.trim()),
-    Boolean(profile.college.trim()),
-    Boolean(profile.graduationYear.trim()),
-    profile.interests.length > 0,
-    Boolean(profile.experienceLevel),
+    Boolean(savedProfile.fullName.trim()),
+    Boolean(savedProfile.email.trim()),
+    Boolean(savedProfile.degree.trim()),
+    Boolean(savedProfile.branch.trim()),
+    Boolean(savedProfile.college.trim()),
+    Boolean(savedProfile.graduationYear.trim()),
+    savedProfile.interests.length > 0
+      || savedProfile.careerInterests.length > 0
+      || savedProfile.preferredWorkAreas.length > 0
+      || savedProfile.preferredIndustries.length > 0,
+    Boolean(savedProfile.experienceLevel),
   ];
   const completedEssentials = profileEssentials.filter(Boolean).length;
+  const profileCompletionPercentage = Math.round((completedEssentials / profileEssentials.length) * 100);
+  const displayInterests = [...new Set([
+    ...savedProfile.interests,
+    ...savedProfile.careerInterests,
+    ...savedProfile.preferredWorkAreas,
+    ...savedProfile.preferredIndustries,
+  ])];
+  const displayCareerPathway = savedProfile.selectedCareerPathway?.pathwayName
+    || savedProfile.selectedCareerPathway?.careerPath
+    || '';
 
   function addProject() {
     setProfile((current) => ({
@@ -1005,11 +1154,19 @@ function StudentProfile({ user, onRequestSignIn }) {
   }
 
   return (
-    <section className="profile-page">
+    <section className={`profile-page profile-page--${page}`}>
       <div className="profile-intro">
         <p className="eyebrow"><span className="eyebrow-dot" /> Your professional profile</p>
-        <h1>{displayName || 'Build your'}{displayName ? '' : <> <span>student profile.</span></>}</h1>
-        <p>Showcase your education, skills, projects, and professional links.</p>
+        <h1>{page === 'profileHistory'
+          ? 'Profile history'
+          : page === 'profileEdit'
+            ? cloudProfileExists ? 'Edit your profile' : 'Create your profile'
+            : displayName || 'Your student profile'}</h1>
+        <p>{page === 'profileHistory'
+          ? 'Review, restore, or remove a saved profile snapshot.'
+          : page === 'profileEdit'
+            ? 'Keep your education, skills, projects, and professional links up to date.'
+            : 'Your education, skills, projects, and professional links in one place.'}</p>
       </div>
 
       {!isAuthorized ? (
@@ -1028,6 +1185,35 @@ function StudentProfile({ user, onRequestSignIn }) {
         </div>
       ) : (
         <>
+          <nav className="profile-page-nav" aria-label="Student Profile pages">
+            <button
+              className={`button ${page === 'profile' ? 'button-primary' : 'button-secondary'}`}
+              type="button"
+              aria-current={page === 'profile' ? 'page' : undefined}
+              onClick={() => onNavigate('profile')}
+            >
+              Profile Overview
+            </button>
+            <button
+              className={`button ${page === 'profileEdit' ? 'button-primary' : 'button-secondary'}`}
+              type="button"
+              aria-current={page === 'profileEdit' ? 'page' : undefined}
+              onClick={() => onNavigate('profileEdit')}
+            >
+              Create / Edit Profile
+            </button>
+            <button
+              className={`button ${page === 'profileHistory' ? 'button-primary' : 'button-secondary'}`}
+              type="button"
+              aria-current={page === 'profileHistory' ? 'page' : undefined}
+              onClick={() => onNavigate('profileHistory')}
+            >
+              Profile History
+            </button>
+          </nav>
+
+          {page === 'profile' && (
+            <>
           <section className="profile-showcase" aria-label="Profile overview">
             <div className="profile-showcase-header">
               <div className="profile-avatar-shell">
@@ -1043,39 +1229,6 @@ function StudentProfile({ user, onRequestSignIn }) {
                 ) : (
                   <span className="profile-avatar" aria-hidden="true">{displayName ? displayName.charAt(0).toUpperCase() : 'S'}</span>
                 )}
-                <div className="profile-photo-controls">
-                  <input
-                    ref={avatarInput}
-                    className="profile-photo-input"
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    aria-label="Choose a profile photo"
-                    aria-invalid={avatarError ? 'true' : undefined}
-                    aria-describedby={avatarError ? 'profile-photo-error' : 'profile-photo-help'}
-                    onChange={handleAvatarSelection}
-                  />
-                  <button className="small-action" type="button" onClick={() => avatarInput.current?.click()} disabled={isBusy}>
-                    {savedProfile.profilePhotoPath ? 'Replace photo' : 'Add photo'}
-                  </button>
-                  {avatarChange !== 'unchanged' ? (
-                    <button className="remove-action" type="button" onClick={cancelAvatarChange} disabled={isBusy}>
-                      {avatarChange === 'remove' ? 'Undo removal' : 'Cancel change'}
-                    </button>
-                  ) : savedProfile.profilePhotoPath ? (
-                    <button className="remove-action" type="button" onClick={removeAvatar} disabled={isBusy}>
-                      Remove photo
-                    </button>
-                  ) : null}
-                </div>
-                {avatarChange === 'upload' && <p className="profile-photo-pending">Preview only · save profile to apply</p>}
-                <p className="profile-photo-help" id="profile-photo-help">JPEG, PNG, or WebP · up to {MAX_AVATAR_FILE_SIZE / (1024 * 1024)} MB</p>
-                {avatarProgress !== null && (
-                  <div className="profile-photo-progress" role="progressbar" aria-label="Profile photo upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={avatarProgress}>
-                    <span style={{ width: `${avatarProgress}%` }} />
-                    <small>{avatarProgress}%</small>
-                  </div>
-                )}
-                {avatarError && <p className="profile-photo-error" id="profile-photo-error" role="alert">{avatarError}</p>}
                 {avatarLoadError && !avatarError && <p className="profile-photo-error" role="status">{avatarLoadError}</p>}
               </div>
               <div className="profile-showcase-identity">
@@ -1083,27 +1236,42 @@ function StudentProfile({ user, onRequestSignIn }) {
                 {displayEducation.length > 0
                   ? <p>{displayEducation.join(' · ')}</p>
                   : <p>Education details will appear here when you add them.</p>}
-                <button
-                  className="button button-secondary profile-edit-action"
-                  type="button"
-                  onClick={() => document.getElementById('profile-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                >
-                  Edit profile
-                </button>
+                <div className="profile-action-buttons profile-overview-actions">
+                  <button className="button button-primary" type="button" onClick={() => onNavigate('profileEdit')}>
+                    {cloudProfileExists ? 'Edit Profile' : 'Create Profile'}
+                  </button>
+                  <button className="button button-secondary" type="button" onClick={() => onNavigate('profileHistory')}>
+                    Profile History
+                  </button>
+                </div>
               </div>
             </div>
             {savedProfile.summary.trim() && <p className="profile-showcase-summary">{savedProfile.summary}</p>}
-            {displayInterests.length > 0 && (
+            <section className="profile-showcase-panel profile-personal-details" aria-labelledby="profile-personal-title">
+              <h3 id="profile-personal-title">Personal information</h3>
+              <dl className="profile-overview-facts history-details">
+                <div><dt>Email</dt><dd>{savedProfile.email || 'Not provided'}</dd></div>
+                {savedProfile.username && <div><dt>Username</dt><dd>{savedProfile.username}</dd></div>}
+                <div><dt>Experience level</dt><dd>{savedProfile.experienceLevel || 'Not provided'}</dd></div>
+                {displayCareerPathway && <div><dt>Selected career pathway</dt><dd>{displayCareerPathway}</dd></div>}
+              </dl>
+            </section>
+            {displayInterests.length > 0 ? (
               <ul className="profile-showcase-tags" aria-label="Career interests">
                 {displayInterests.map((interest, index) => <li key={`${interest}-${index}`}>{interest}</li>)}
               </ul>
-            )}
-            {savedProfile.skills.length > 0 && (
+            ) : <p className="profile-showcase-empty profile-overview-empty">No career interests added yet.</p>}
+            {savedProfile.skills.length > 0 ? (
               <div className="profile-showcase-skills">
                 <h3>Skills</h3>
                 <ul className="profile-showcase-tags" aria-label="Saved skills">
                   {savedProfile.skills.map((skill, index) => <li key={`${skill}-${index}`}>{skill}</li>)}
                 </ul>
+              </div>
+            ) : (
+              <div className="profile-showcase-skills">
+                <h3>Skills</h3>
+                <p className="profile-showcase-empty">No skills added yet.</p>
               </div>
             )}
             <section className="profile-showcase-links" aria-labelledby="profile-links-title">
@@ -1124,7 +1292,7 @@ function StudentProfile({ user, onRequestSignIn }) {
                     </li>
                   ))}
                 </ul>
-              ) : <p className="profile-showcase-empty">Add a link below to make your professional work easier to discover.</p>}
+              ) : <p className="profile-showcase-empty">Add professional links from Create / Edit Profile.</p>}
             </section>
           </section>
 
@@ -1152,26 +1320,48 @@ function StudentProfile({ user, onRequestSignIn }) {
                 </div>
               ) : <p className="profile-showcase-empty">No projects added yet.</p>}
             </section>
-            <section className="profile-showcase-panel" aria-labelledby="profile-credentials-title">
-              <h3 id="profile-credentials-title">Education &amp; Certifications</h3>
+            <section className="profile-showcase-panel" aria-labelledby="profile-education-title">
+              <h3 id="profile-education-title">Education</h3>
               {displayEducation.length > 0 && (
                 <div className="profile-credential-item">
                   <strong>{[savedProfile.degree, savedProfile.branch].filter(Boolean).join(' · ') || 'Education'}</strong>
                   <span>{[savedProfile.college, savedProfile.graduationYear].filter(Boolean).join(' · ')}</span>
                 </div>
               )}
+              {!displayEducation.length && <p className="profile-showcase-empty">No education details added yet.</p>}
+            </section>
+            <section className="profile-showcase-panel" aria-labelledby="profile-credentials-title">
+              <h3 id="profile-credentials-title">Certifications</h3>
               {savedProfile.certifications.filter((certification) => certification.name.trim() || certification.issuer.trim()).map((certification, index) => (
                 <div className="profile-credential-item" key={`${certification.name}-${index}`}>
                   <strong>{certification.name || 'Certification'}</strong>
                   {certification.issuer && <span>{certification.issuer}</span>}
                 </div>
               ))}
-              {!displayEducation.length && !savedProfile.certifications.some((certification) => certification.name.trim() || certification.issuer.trim()) && (
-                <p className="profile-showcase-empty">Education and certifications will appear here when added.</p>
+              {!savedProfile.certifications.some((certification) => certification.name.trim() || certification.issuer.trim()) && (
+                <p className="profile-showcase-empty">No certifications added yet.</p>
               )}
             </section>
           </div>
 
+          <section className="profile-completion" aria-labelledby="profile-completion-title">
+            <div className="profile-completion-heading">
+              <div>
+                <p className="eyebrow">A useful starting point</p>
+                <h2 id="profile-completion-title">Profile completion</h2>
+              </div>
+              <strong>{profileCompletionPercentage}%</strong>
+            </div>
+            <progress value={profileCompletionPercentage} max="100" aria-label={`Profile ${profileCompletionPercentage}% complete`} />
+            <p>{profileCompletionPercentage === 100
+              ? 'Your core profile is ready to inform career recommendations.'
+              : 'Complete your personal, education, career-interest, and experience details to build a stronger profile.'}</p>
+          </section>
+            </>
+          )}
+
+          {page === 'profileEdit' && (
+            <>
           {localProfile && !cloudProfileExists && (
             <aside className="profile-migration" aria-labelledby="profile-migration-title">
               <h2 id="profile-migration-title">A profile is saved on this device</h2>
@@ -1186,21 +1376,60 @@ function StudentProfile({ user, onRequestSignIn }) {
             </aside>
           )}
 
-          <section className="profile-completion" aria-labelledby="profile-completion-title">
-            <div className="profile-completion-heading">
-              <div>
-                <p className="eyebrow">A useful starting point</p>
-                <h2 id="profile-completion-title">Profile essentials</h2>
-              </div>
-              <strong>{completedEssentials} of {profileEssentials.length} complete</strong>
-            </div>
-            <progress value={completedEssentials} max={profileEssentials.length} aria-label={`${completedEssentials} of ${profileEssentials.length} profile essentials complete`} />
-            <p>{completedEssentials === profileEssentials.length
-              ? 'Your core profile is ready to inform career recommendations.'
-              : 'Complete the required details below to give your recommendations a stronger starting point.'}</p>
-          </section>
-
           <form id="profile-editor" className="profile-form" onSubmit={saveProfile} noValidate>
+        <div className="profile-photo-editor profile-showcase-panel" aria-labelledby="profile-photo-editor-title">
+          <div className="profile-avatar-shell">
+            {shownAvatarUrl && !avatarImageFailed ? (
+              <img
+                className="profile-avatar"
+                src={shownAvatarUrl}
+                alt={`${profile.fullName.trim() || profile.username.trim() || 'Student'} profile preview`}
+                onError={() => setAvatarImageFailed(true)}
+              />
+            ) : (
+              <span className="profile-avatar" aria-hidden="true">
+                {(profile.fullName.trim() || profile.username.trim() || 'S').charAt(0).toUpperCase()}
+              </span>
+            )}
+          </div>
+          <div className="profile-photo-editor__content">
+            <h3 id="profile-photo-editor-title">Profile photo</h3>
+            <p className="profile-photo-help" id="profile-photo-help">JPEG, PNG, or WebP · up to {MAX_AVATAR_FILE_SIZE / (1024 * 1024)} MB</p>
+            <div className="profile-photo-controls">
+              <input
+                ref={avatarInput}
+                className="profile-photo-input"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                aria-label="Choose a profile photo"
+                aria-invalid={avatarError ? 'true' : undefined}
+                aria-describedby={avatarError ? 'profile-photo-error' : 'profile-photo-help'}
+                onChange={handleAvatarSelection}
+              />
+              <button className="small-action" type="button" onClick={() => avatarInput.current?.click()} disabled={isBusy}>
+                {savedProfile.profilePhotoPath ? 'Replace photo' : 'Add photo'}
+              </button>
+              {avatarChange !== 'unchanged' ? (
+                <button className="remove-action" type="button" onClick={cancelAvatarChange} disabled={isBusy}>
+                  {avatarChange === 'remove' ? 'Undo removal' : 'Cancel change'}
+                </button>
+              ) : savedProfile.profilePhotoPath ? (
+                <button className="remove-action" type="button" onClick={removeAvatar} disabled={isBusy}>
+                  Remove photo
+                </button>
+              ) : null}
+            </div>
+            {avatarChange === 'upload' && <p className="profile-photo-pending">Preview only · save profile to apply</p>}
+            {avatarProgress !== null && (
+              <div className="profile-photo-progress" role="progressbar" aria-label="Profile photo upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={avatarProgress}>
+                <span style={{ width: `${avatarProgress}%` }} />
+                <small>{avatarProgress}%</small>
+              </div>
+            )}
+            {avatarError && <p className="profile-photo-error" id="profile-photo-error" role="alert">{avatarError}</p>}
+            {avatarLoadError && !avatarError && <p className="profile-photo-error" role="status">{avatarLoadError}</p>}
+          </div>
+        </div>
         <ProfileSection number="01" title="Personal information" description="How should we identify you?">
           <div className="form-grid form-grid-two">
             <FormField id="fullName" label="Full name" error={errors.fullName}>
@@ -1392,6 +1621,9 @@ function StudentProfile({ user, onRequestSignIn }) {
             {feedback.message && <span className={`feedback-message feedback-message--${feedback.type}`}>{feedback.message}</span>}
           </div>
           <div className="profile-action-buttons">
+            <button className="button button-secondary" type="button" onClick={cancelEditing} disabled={isBusy}>
+              Cancel
+            </button>
             {hasUnsavedChanges && (
               <button className="button button-secondary" type="button" onClick={discardChanges} disabled={isBusy}>
                 Discard changes
@@ -1406,8 +1638,19 @@ function StudentProfile({ user, onRequestSignIn }) {
           </div>
         </div>
           </form>
+            </>
+          )}
 
+          {page === 'profileHistory' && (
           <section className="profile-history" aria-labelledby="profile-history-title">
+            {feedback.message && (
+              <p
+                className={`feedback-message feedback-message--${feedback.type}`}
+                role={feedback.type === 'error' ? 'alert' : 'status'}
+              >
+                {feedback.message}
+              </p>
+            )}
             <div className="profile-history-heading">
               <div>
                 <p className="eyebrow">Saved snapshots</p>
@@ -1428,16 +1671,26 @@ function StudentProfile({ user, onRequestSignIn }) {
                   <li className="profile-history-item" key={version.versionId}>
                     <div className="profile-history-summary">
                       <strong>{formatHistoryDate(version.savedAt)}</strong>
-                      <span>{version.changeType === 'before_restore' ? 'Before restore' : 'Before update'}</span>
+                      <span>{getHistoryChangeLabel(version.changeType)}</span>
                     </div>
-                    <button
-                      className="small-action"
-                      type="button"
-                      onClick={() => setSelectedHistory(version)}
-                      disabled={isBusy}
-                    >
-                      View version
-                    </button>
+                    <div className="profile-action-buttons profile-history-actions">
+                      <button
+                        className="small-action"
+                        type="button"
+                        onClick={() => setSelectedHistory(version)}
+                        disabled={isBusy}
+                      >
+                        View version
+                      </button>
+                      <button
+                        className="remove-action"
+                        type="button"
+                        onClick={() => deleteHistoryVersion(version)}
+                        disabled={isBusy}
+                      >
+                        {deletingVersionId === version.versionId ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1448,19 +1701,36 @@ function StudentProfile({ user, onRequestSignIn }) {
                 <div className="history-preview-heading">
                   <div>
                     <h3 id="history-preview-title">Previous profile</h3>
-                    <p>{formatHistoryDate(selectedHistory.savedAt)} · {selectedHistory.changeType === 'before_restore' ? 'Before restore' : 'Before update'}</p>
+                    <p>{formatHistoryDate(selectedHistory.savedAt)} · {getHistoryChangeLabel(selectedHistory.changeType)}</p>
                   </div>
                   <button className="remove-action" type="button" onClick={() => setSelectedHistory(null)}>Close</button>
                 </div>
                 <dl className="history-details">
                   <div><dt>Name</dt><dd>{selectedHistory.fullName || '—'}</dd></div>
                   <div><dt>Profile email</dt><dd>{selectedHistory.email || '—'}</dd></div>
+                  <div><dt>Username</dt><dd>{selectedHistory.username || '—'}</dd></div>
+                  <div><dt>Professional summary</dt><dd>{selectedHistory.summary || '—'}</dd></div>
                   <div><dt>Education</dt><dd>{[selectedHistory.degree, selectedHistory.branch].filter(Boolean).join(' · ') || '—'}</dd></div>
                   <div><dt>College</dt><dd>{selectedHistory.college || '—'}</dd></div>
                   <div><dt>Graduation year</dt><dd>{selectedHistory.graduationYear || '—'}</dd></div>
                   <div><dt>Experience</dt><dd>{selectedHistory.experienceLevel || '—'}</dd></div>
                   <div><dt>Skills</dt><dd>{selectedHistory.skills?.join(', ') || '—'}</dd></div>
-                  <div><dt>Interests</dt><dd>{selectedHistory.interests?.join(', ') || '—'}</dd></div>
+                  <div><dt>Interests</dt><dd>{[
+                    ...(selectedHistory.interests || []),
+                    ...(selectedHistory.careerInterests || []),
+                    ...(selectedHistory.preferredWorkAreas || []),
+                    ...(selectedHistory.preferredIndustries || []),
+                  ].length ? [...new Set([
+                    ...(selectedHistory.interests || []),
+                    ...(selectedHistory.careerInterests || []),
+                    ...(selectedHistory.preferredWorkAreas || []),
+                    ...(selectedHistory.preferredIndustries || []),
+                  ])].join(', ') : '—'}</dd></div>
+                  <div><dt>Selected pathway</dt><dd>{selectedHistory.selectedCareerPathway?.pathwayName || selectedHistory.selectedCareerPathway?.careerPath || '—'}</dd></div>
+                  <div><dt>Professional links</dt><dd>{professionalLinkFields
+                    .filter((field) => selectedHistory[field.key])
+                    .map((field) => field.label)
+                    .join(', ') || '—'}</dd></div>
                   <div>
                     <dt>Projects</dt>
                     <dd>
@@ -1504,6 +1774,7 @@ function StudentProfile({ user, onRequestSignIn }) {
               </div>
             )}
           </section>
+          )}
         </>
       )}
     </section>

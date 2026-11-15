@@ -159,6 +159,17 @@ test('authenticated profile, discovery, tracker, and learning pages pass axe che
       await expect(page.getByRole('heading', { name: heading, exact: true })).toBeVisible();
     }
     violations.push(...await getAxeViolations(page, pageName));
+    if (pageName === 'Student Profile') {
+      for (const [label, routeHeading] of [
+        ['Create / Edit Profile', /Create your profile|Edit your profile/],
+        ['Profile History', 'Profile history'],
+      ]) {
+        await page.getByRole('button', { name: label, exact: true }).click();
+        await expect(page.getByRole('heading', { level: 1, name: routeHeading })).toBeVisible();
+        violations.push(...await getAxeViolations(page, routeHeading));
+      }
+      await page.getByRole('button', { name: 'Profile Overview', exact: true }).click();
+    }
   }
   expectNoAxeViolations(violations);
 });
@@ -212,10 +223,11 @@ test('native confirmation dialog can be dismissed without deleting an applicatio
 
 test('unauthenticated protected-route redirection retains accessible sign-in controls', async ({ page }) => {
   await mockBackend(page);
-  await page.goto('/#student-profile');
-
-  await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
-  await expect(page.getByRole('textbox', { name: 'Email address' })).toHaveAccessibleName('Email address');
-  await expect(page.getByLabel('Password')).toHaveAccessibleName('Password');
-  expectNoAxeViolations(await getAxeViolations(page, 'protected route sign-in page'));
+  for (const hash of ['#student-profile', '#student-profile-edit', '#student-profile-history']) {
+    await page.goto(`/${hash}`);
+    await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Email address' })).toHaveAccessibleName('Email address');
+    await expect(page.getByLabel('Password')).toHaveAccessibleName('Password');
+    expectNoAxeViolations(await getAxeViolations(page, `protected route ${hash} sign-in page`));
+  }
 });

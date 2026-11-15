@@ -50,7 +50,8 @@ const workflowSteps = [
   'Track progress',
 ];
 
-const protectedPages = new Set(['dashboard', 'profile', 'recommendations', 'learning', 'jobMatch', 'jobTracker', 'jobDiscovery', 'resume', 'settings', 'username']);
+const profilePageKeys = new Set(['profile', 'profileEdit', 'profileHistory']);
+const protectedPages = new Set(['dashboard', ...profilePageKeys, 'recommendations', 'learning', 'jobMatch', 'jobTracker', 'jobDiscovery', 'resume', 'settings', 'username']);
 
 function hasVerifiedAccess(user) {
   return Boolean(user && (
@@ -264,11 +265,13 @@ function App() {
     disconnected: 'Backend Disconnected',
   }[apiStatus];
 
-  const appShellPages = new Set(['dashboard', 'profile', 'recommendations', 'learning', 'jobMatch', 'jobTracker', 'jobDiscovery', 'resume', 'settings']);
+  const appShellPages = new Set(['dashboard', ...profilePageKeys, 'recommendations', 'learning', 'jobMatch', 'jobTracker', 'jobDiscovery', 'resume', 'settings']);
   const isAuthenticatedAppView = hasVerifiedAccess(authUser) && usernameStatus === 'ready' && appShellPages.has(currentPage);
   const currentPageTitle = {
     dashboard: 'Dashboard',
     profile: 'Student Profile',
+    profileEdit: 'Create / Edit Profile',
+    profileHistory: 'Profile History',
     recommendations: 'Career Recommendations',
     learning: 'Skill Gap & Learning Resources',
     jobMatch: 'AI Job Match Analyzer',
@@ -401,7 +404,9 @@ function App() {
                   {!sidebarCollapsed && <p className="sidebar-section-title">{section.title}</p>}
                   <nav className="sidebar-links" aria-label={section.title}>
                     {section.items.map((item) => {
-                      const active = currentPage === item.key;
+                      const active = item.key === 'profile'
+                        ? profilePageKeys.has(currentPage)
+                        : currentPage === item.key;
                       return (
                         <button
                           key={item.key}
@@ -482,8 +487,13 @@ function App() {
                     navigate('learning');
                   }}
                 />
-              ) : currentPage === 'profile' && hasVerifiedAccess(authUser) ? (
-                <StudentProfile user={authUser} onRequestSignIn={() => openAuthPage('login')} />
+              ) : profilePageKeys.has(currentPage) && hasVerifiedAccess(authUser) ? (
+                <StudentProfile
+                  user={authUser}
+                  page={currentPage}
+                  onNavigate={navigate}
+                  onRequestSignIn={() => openAuthPage('login')}
+                />
               ) : currentPage === 'resume' && hasVerifiedAccess(authUser) ? (
                 <ResumeBuilder user={authUser} onBack={() => navigate('dashboard')} />
               ) : currentPage === 'settings' && hasVerifiedAccess(authUser) ? (
@@ -640,8 +650,13 @@ function App() {
                 navigate('learning');
               }}
             />
-          ) : currentPage === 'profile' && hasVerifiedAccess(authUser) ? (
-            <StudentProfile user={authUser} onRequestSignIn={() => openAuthPage('login')} />
+          ) : profilePageKeys.has(currentPage) && hasVerifiedAccess(authUser) ? (
+            <StudentProfile
+              user={authUser}
+              page={currentPage}
+              onNavigate={navigate}
+              onRequestSignIn={() => openAuthPage('login')}
+            />
           ) : currentPage === 'resume' && hasVerifiedAccess(authUser) ? (
             <ResumeBuilder user={authUser} onBack={() => navigate('dashboard')} />
           ) : currentPage === 'settings' && hasVerifiedAccess(authUser) ? (

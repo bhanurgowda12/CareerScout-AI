@@ -66,12 +66,21 @@ test('Auth emulator account can sign in to protected pages and sign out', async 
   await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
 });
 
-test('student profile edits persist in Firestore after reload', async ({ page }) => {
+test('student profile routes create, cancel, update, view, restore, and delete snapshots', async ({ page }) => {
   await mockBackend(page);
   const account = await createVerifiedAccount();
-  const username = await signInThroughApp(page, account);
+  await signInThroughApp(page, account);
   await openWorkspacePage(page, 'Student Profile');
-  await expect(page.getByRole('heading', { level: 1, name: username })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Profile overview' })).toBeVisible();
+  await expect(page).toHaveURL(/#student-profile$/);
+  const profileSidebarButton = page.getByRole('navigation', { name: 'Career Growth' })
+    .getByRole('button', { name: 'Student Profile', exact: true });
+  await expect(profileSidebarButton).toHaveAttribute('aria-current', 'page');
+
+  await page.getByRole('button', { name: 'Create / Edit Profile', exact: true }).click();
+  await expect(page).toHaveURL(/#student-profile-edit$/);
+  await expect(profileSidebarButton).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('heading', { level: 1, name: /Create your profile|Edit your profile/ })).toBeVisible();
 
   await page.getByLabel('Full name').fill('Synthetic E2E Student');
   await page.getByLabel('Email address').fill(account.email);
@@ -82,9 +91,63 @@ test('student profile edits persist in Firestore after reload', async ({ page })
   await page.getByLabel('Current level').selectOption('Beginner');
   await page.getByLabel('Software and application development').check();
   await page.getByRole('button', { name: 'Save Profile' }).click();
-  await expect(page.getByText('Your profile has been saved to your account.')).toBeVisible();
+  await expect(page).toHaveURL(/#student-profile$/);
+  await expect(page.getByRole('heading', { level: 2, name: 'Synthetic E2E Student' })).toBeVisible();
+  await expect(page.getByText('100%', { exact: true })).toBeVisible();
+
+  await page.locator('.profile-overview-actions').getByRole('button', { name: 'Profile History', exact: true }).click();
+  await expect(page).toHaveURL(/#student-profile-history$/);
+  await expect(profileSidebarButton).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('listitem').filter({ hasText: 'Before profile update' })).toHaveCount(1);
+
+  await page.getByRole('button', { name: 'Create / Edit Profile', exact: true }).click();
+  await page.getByLabel('Full name').fill('Unsaved E2E Edit');
+  const cancelDialog = page.waitForEvent('dialog');
+  const cancelClick = page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await (await cancelDialog).accept();
+  await cancelClick;
+  await expect(page.getByRole('heading', { level: 2, name: 'Synthetic E2E Student' })).toBeVisible();
+  await expect(page.getByText('Unsaved E2E Edit')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Edit Profile', exact: true }).click();
+  await page.getByLabel('Full name').fill('Updated E2E Student');
+  await page.getByRole('button', { name: 'Save Profile' }).click();
+  await expect(page).toHaveURL(/#student-profile$/);
+  await expect(page.getByRole('heading', { level: 2, name: 'Updated E2E Student' })).toBeVisible();
 
   await page.reload();
+  await expect(page.getByRole('heading', { level: 2, name: 'Updated E2E Student' })).toBeVisible();
+  await page.locator('.profile-overview-actions').getByRole('button', { name: 'Profile History', exact: true }).click();
+  const oldVersion = page.getByRole('listitem').filter({ hasText: 'Before profile update' }).first();
+  await expect(oldVersion).toBeVisible();
+  await oldVersion.getByRole('button', { name: 'View version' }).click();
+  await expect(page.getByRole('heading', { name: 'Previous profile' })).toBeVisible();
+  await expect(page.locator('.history-details')).toContainText('Synthetic E2E Student');
+  const restoreDialog = page.waitForEvent('dialog');
+  const restoreClick = page.getByRole('button', { name: 'Restore this version' }).click();
+  await (await restoreDialog).accept();
+  await restoreClick;
+  await expect(page.getByText(/The selected version was restored/)).toBeVisible();
+  await page.getByRole('button', { name: 'Profile Overview', exact: true }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Synthetic E2E Student' })).toBeVisible();
+
+  await page.locator('.profile-overview-actions').getByRole('button', { name: 'Profile History', exact: true }).click();
+  const beforeUpdateVersions = page.getByRole('listitem').filter({ hasText: 'Before profile update' });
+  await expect(beforeUpdateVersions.first()).toBeVisible();
+  const beforeUpdateCount = await beforeUpdateVersions.count();
+  const versionToDelete = beforeUpdateVersions.first();
+  const deleteDialog = page.waitForEvent('dialog');
+  const deleteClick = versionToDelete.getByRole('button', { name: 'Delete', exact: true }).click();
+  const deletePrompt = await deleteDialog;
+  expect(deletePrompt.type()).toBe('confirm');
+  await deletePrompt.accept();
+  await deleteClick;
+  await expect(beforeUpdateVersions).toHaveCount(beforeUpdateCount - 1);
+
+  await page.getByRole('button', { name: 'Profile Overview', exact: true }).click();
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 2, name: 'Synthetic E2E Student' })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit Profile', exact: true }).click();
   await expect(page.getByLabel('Full name')).toHaveValue('Synthetic E2E Student');
   await expect(page.getByLabel('College name')).toHaveValue('Synthetic Test College');
 });
@@ -305,5 +368,21 @@ test('dark and light themes render every workspace page without responsive overf
       expect(await page.locator('html').getAttribute('data-theme')).toBe('dark');
     }
     await page.setViewportSize({ width: 1440, height: 900 });
+    if (route.name === 'Student Profile') {
+      for (const [label, heading] of [
+        ['Create / Edit Profile', /Create your profile|Edit your profile/],
+        ['Profile History', 'Profile history'],
+      ]) {
+        await page.getByRole('button', { name: label, exact: true }).click();
+        await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible();
+        for (const width of [1440, 768, 390]) {
+          await page.setViewportSize({ width, height: 900 });
+          await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+          expect(await page.locator('html').getAttribute('data-theme')).toBe('dark');
+        }
+        await page.setViewportSize({ width: 1440, height: 900 });
+      }
+      await page.getByRole('button', { name: 'Profile Overview', exact: true }).click();
+    }
   }
 });
