@@ -872,8 +872,12 @@ In a PowerShell terminal, from the repository root:
 ```powershell
 Set-Location .\backend
 .\.venv\Scripts\Activate.ps1
+$env:CAREERSCOUT_ENV = "development"
+$env:RATE_LIMIT_STORAGE = "memory"
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
+
+These settings select development mode with process-local, memory-based rate limiting. Memory storage is intended for local development and tests only; its limits and provider coordination are not shared across backend processes, so do not use it in production. Production must use `CAREERSCOUT_ENV=production`, `RATE_LIMIT_STORAGE=redis`, and a reachable `REDIS_URL`. A `REDIS_URL` is required whenever `RATE_LIMIT_STORAGE=redis`; production also uses Redis for shared provider concurrency and company-board request coordination. See [Section 12.2](#122-backend-variables) for configuration details.
 
 The backend listens at `http://127.0.0.1:8000`. Health check: `http://127.0.0.1:8000/api/health`.
 

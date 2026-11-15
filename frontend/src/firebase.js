@@ -1,8 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
-import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';
-import { connectStorageEmulator, getStorage } from 'firebase/storage';
 import { shouldUseFirebaseEmulators } from './environmentConfig.js';
 
 const firebaseConfig = {
@@ -25,7 +23,7 @@ export const firebaseApp = isFirebaseConfigured
   ? initializeApp(firebaseConfig)
   : null;
 
-const useFirebaseEmulators = shouldUseFirebaseEmulators(import.meta.env, {
+export const useFirebaseEmulators = shouldUseFirebaseEmulators(import.meta.env, {
   isDevelopment: import.meta.env.DEV,
 });
 const appCheckSiteKey = import.meta.env.VITE_FIREBASE_APP_CHECK_SITE_KEY?.trim();
@@ -47,24 +45,6 @@ export const auth = firebaseApp
   ? getAuth(firebaseApp)
   : null;
 
-export const firestore = firebaseApp
-  ? getFirestore(firebaseApp)
-  : null;
-
-const storageBucket = typeof firebaseConfig.storageBucket === 'string'
-  ? firebaseConfig.storageBucket.trim()
-  : '';
-const storageBucketUrl = storageBucket.startsWith('gs://')
-  ? storageBucket
-  : `gs://${storageBucket}`;
-
-export const storage = firebaseApp && typeof firebaseConfig.storageBucket === 'string'
-  && storageBucket
-  ? getStorage(firebaseApp, storageBucketUrl)
-  : null;
-
-if (useFirebaseEmulators && auth && firestore && storage) {
+if (useFirebaseEmulators && auth) {
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-  connectFirestoreEmulator(firestore, '127.0.0.1', 8080);
-  connectStorageEmulator(storage, '127.0.0.1', 9199);
 }

@@ -21,6 +21,15 @@
   --surface: #fffefa;
   --surface-strong: #f4f7f1;
   --sidebar-bg: #f3f6f1;
+  --page-background: #f7f7f2;
+  --surface-raised: #fffefa;
+  --border-color: #dfe3dc;
+  --text-primary: #1f2924;
+  --text-secondary: #626c64;
+  --text-muted: #788079;
+  --accent-primary: #245c45;
+  --accent-secondary: #53644e;
+  --accent-hover: #194b36;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -966,53 +975,53 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 :root[data-theme="dark"] .job-tracker-summary article,
 :root[data-theme="dark"] .job-tracker-form,
 :root[data-theme="dark"] .job-tracker-list-section,
-:root[data-theme="dark"] .job-tracker-card { border-color: #3a4a40; background: #202a23; box-shadow: 0 8px 21px rgb(0 0 0 / 14%); }
-:root[data-theme="dark"] .job-tracker-card--upcoming { border-left-color: #91ad68; }
+:root[data-theme="dark"] .job-tracker-card { border-color: var(--border-color); background: var(--surface); box-shadow: none; }
+:root[data-theme="dark"] .job-tracker-card--upcoming { border-left-color: var(--accent-primary); }
 :root[data-theme="dark"] .job-tracker-card--overdue { border-left-color: #bd7a68; }
 :root[data-theme="dark"] .job-tracker-form .form-field input,
 :root[data-theme="dark"] .job-tracker-form .form-field select,
 :root[data-theme="dark"] .job-tracker-form .form-field textarea,
 :root[data-theme="dark"] .job-tracker-controls .form-field input,
-:root[data-theme="dark"] .job-tracker-controls .form-field select { border-color: #4b5d50; background: #151e18; color: #edf2ed; color-scheme: dark; }
-:root[data-theme="dark"] .job-tracker-summary strong { color: #b8d9b8; }
-:root[data-theme="dark"] .job-tracker-card-title > p { color: #b5c9a7; }
-:root[data-theme="dark"] .job-tracker-status { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
+:root[data-theme="dark"] .job-tracker-controls .form-field select { border-color: var(--border-color); background: var(--page-background); color: var(--text-primary); color-scheme: dark; }
+:root[data-theme="dark"] .job-tracker-summary strong { color: var(--accent-primary); }
+:root[data-theme="dark"] .job-tracker-card-title > p { color: var(--text-secondary); }
+:root[data-theme="dark"] .job-tracker-status { border-color: var(--border-color); background: var(--surface-raised); color: var(--text-secondary); }
 :root[data-theme="dark"] .job-tracker-status--interview,
 :root[data-theme="dark"] .job-tracker-status--offer { border-color: #716b42; background: #39351f; color: #e3d99d; }
 :root[data-theme="dark"] .job-tracker-status--rejected,
 :root[data-theme="dark"] .job-tracker-status--withdrawn { border-color: #754b43; background: #3d2925; color: #f0b7a9; }
-:root[data-theme="dark"] .job-tracker-follow-up { background: #293824; color: #c9dda8; }
+:root[data-theme="dark"] .job-tracker-follow-up { background: var(--surface-raised); color: var(--text-secondary); }
 :root[data-theme="dark"] .job-tracker-follow-up--overdue { background: #3b2824; color: #f0b7a9; }
 :root[data-theme="dark"] .job-tracker-error { border-color: #a55d4d; background: #3b2824; color: #f0b7a9; }
-:root[data-theme="dark"] .job-tracker-empty { border-color: #4a5d4e; }
+:root[data-theme="dark"] .job-tracker-empty { border-color: var(--border-color); }
 :root[data-theme="dark"] .job-tracker-delete { color: #f0b7a9; }
 :root[data-theme="dark"] .job-discovery-search,
 :root[data-theme="dark"] .job-discovery-results,
 :root[data-theme="dark"] .job-discovery-external,
 :root[data-theme="dark"] .job-discovery-modes,
 :root[data-theme="dark"] .job-discovery-company-profile,
-:root[data-theme="dark"] .job-discovery-card { border-color: #3a4a40; background: #202a23; box-shadow: 0 8px 21px rgb(0 0 0 / 14%); }
+:root[data-theme="dark"] .job-discovery-card { border-color: var(--border-color); background: var(--surface); box-shadow: none; }
 :root[data-theme="dark"] .job-discovery-search .form-field input,
 :root[data-theme="dark"] .job-discovery-search .form-field select,
 :root[data-theme="dark"] .job-discovery-category-picker summary,
 :root[data-theme="dark"] .job-discovery-result-tools input,
 :root[data-theme="dark"] .job-discovery-result-tools select,
-:root[data-theme="dark"] .job-discovery-roadmap-heading select { border-color: #4b5d50; background: #151e18; color: #edf2ed; color-scheme: dark; }
+:root[data-theme="dark"] .job-discovery-roadmap-heading select { border-color: var(--border-color); background: var(--page-background); color: var(--text-primary); color-scheme: dark; }
 :root[data-theme="dark"] .job-discovery-category-options,
 :root[data-theme="dark"] .job-discovery-compare,
-:root[data-theme="dark"] .job-discovery-roadmap { border-color: #3a4a40; background: #19221c; }
+:root[data-theme="dark"] .job-discovery-roadmap { border-color: var(--border-color); background: var(--surface-raised); }
 :root[data-theme="dark"] .job-discovery-result-tools,
-:root[data-theme="dark"] .job-discovery-profile-note { border-color: #3a4a40; background: #19221c; }
-:root[data-theme="dark"] .job-discovery-coverage { border-color: #3a4a40; background: #19221c; color: #c2cec4; }
+:root[data-theme="dark"] .job-discovery-profile-note { border-color: var(--border-color); background: var(--surface-raised); }
+:root[data-theme="dark"] .job-discovery-coverage { border-color: var(--border-color); background: var(--surface-raised); color: var(--text-secondary); }
 :root[data-theme="dark"] .job-discovery-company-details > div,
-:root[data-theme="dark"] .job-discovery-company-counts span { border-color: #3a4a40; background: #19221c; }
-:root[data-theme="dark"] .job-discovery-company-details dd { color: #c2cec4; }
+:root[data-theme="dark"] .job-discovery-company-counts span { border-color: var(--border-color); background: var(--surface-raised); }
+:root[data-theme="dark"] .job-discovery-company-details dd { color: var(--text-secondary); }
 :root[data-theme="dark"] .job-discovery-company-details a,
-:root[data-theme="dark"] .job-discovery-company-note a { color: #b1d9a7; }
+:root[data-theme="dark"] .job-discovery-company-note a { color: #a5b4fc; }
 :root[data-theme="dark"] .job-discovery-partial-note,
 :root[data-theme="dark"] .job-discovery-company-note { border-color: #716b42; background: #332f20; color: #e3d6ab; }
 :root[data-theme="dark"] .job-discovery-mode { color: #c2cec4; }
-:root[data-theme="dark"] .job-discovery-mode.is-active { background: #34764c; color: #fff; }
+:root[data-theme="dark"] .job-discovery-mode.is-active { border-color: rgb(99 102 241 / 55%); background: rgb(99 102 241 / 14%); color: #c7d2fe; }
 :root[data-theme="dark"] .job-discovery-category-options label,
 :root[data-theme="dark"] .job-discovery-compare,
 :root[data-theme="dark"] .job-discovery-roadmap,
@@ -1025,19 +1034,19 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 :root[data-theme="dark"] .job-discovery-company-group > h4,
 :root[data-theme="dark"] .job-discovery-company-group > h5,
 :root[data-theme="dark"] .job-discovery-evidence-group > h4,
-:root[data-theme="dark"] .job-discovery-location-group > h3 { color: #e1ebe2; }
-:root[data-theme="dark"] .job-discovery-source-note { background: #293824; color: #c9dda8; }
+:root[data-theme="dark"] .job-discovery-location-group > h3 { color: var(--text-primary); }
+:root[data-theme="dark"] .job-discovery-source-note { background: var(--surface-raised); color: var(--text-secondary); }
 :root[data-theme="dark"] .job-discovery-source-note a,
-:root[data-theme="dark"] .job-discovery-attribution a { color: #b1d9a7; }
+:root[data-theme="dark"] .job-discovery-attribution a { color: #a5b4fc; }
 :root[data-theme="dark"] .job-discovery-badge,
-:root[data-theme="dark"] .job-discovery-category { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
-:root[data-theme="dark"] .job-discovery-experience-badge--provider { border-color: #4a6850; background: #263b2b; color: #c3e0c2; }
+:root[data-theme="dark"] .job-discovery-category { border-color: var(--border-color); background: var(--surface-raised); color: var(--text-secondary); }
+:root[data-theme="dark"] .job-discovery-experience-badge--provider { border-color: var(--border-color); background: var(--surface-raised); color: var(--text-secondary); }
 :root[data-theme="dark"] .job-discovery-experience-badge--title { border-color: #76643e; background: #3a3221; color: #e3cf9b; }
 :root[data-theme="dark"] .job-discovery-experience-badge--description-inferred { border-color: #4a6384; background: #263345; color: #b8d0f0; }
-:root[data-theme="dark"] .job-discovery-experience-badge--unknown { border-color: #47534a; background: #202a23; color: #bec8c0; }
-:root[data-theme="dark"] .job-discovery-external li a { border-color: #4b5d50; color: #b1d9a7; }
-:root[data-theme="dark"] .job-discovery-external li a:hover { background: #293824; }
-:root[data-theme="dark"] .job-discovery-state { border-color: #4a5d4e; }
+:root[data-theme="dark"] .job-discovery-experience-badge--unknown { border-color: var(--border-color); background: var(--surface-raised); color: var(--text-secondary); }
+:root[data-theme="dark"] .job-discovery-external li a { border-color: var(--border-color); color: #a5b4fc; }
+:root[data-theme="dark"] .job-discovery-external li a:hover { background: rgb(99 102 241 / 14%); }
+:root[data-theme="dark"] .job-discovery-state { border-color: var(--border-color); }
 :root[data-theme="dark"] .job-discovery-error,
 :root[data-theme="dark"] .job-discovery-state--error { color: #f0b7a9; }
 
@@ -1733,26 +1742,26 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 
 :root[data-theme="dark"] .profile-education-section .form-field input,
 :root[data-theme="dark"] .profile-education-section .form-field select,
-:root[data-theme="dark"] .profile-education-section .form-field select option { border-color: #526457; background: #151e18; color: #edf2ed; color-scheme: dark; }
-:root[data-theme="dark"] .profile-education-section .form-field input::placeholder { color: #a5b1a7; }
-:root[data-theme="dark"] .profile-interests-section .choice-option { border-color: #526457; background: #202a23; color: #e1ebe2; }
-:root[data-theme="dark"] .profile-interests-section .choice-option--selected { border-color: #759476; background: #2a3b2d; color: #e1ebe2; }
-:root[data-theme="dark"] .profile-interests-section .choice-option:not(.choice-option--selected):hover { border-color: #759476; background: #29392c; }
-:root[data-theme="dark"] .profile-interests-section .choice-check { border-color: #a5b1a7; }
-:root[data-theme="dark"] .profile-interests-section .choice-option--selected .choice-check { border-color: #77aa80; background: #34764c; color: #fff; }
-:root[data-theme="dark"] .resume-education-section .resume-entry { border-color: #3a4a40; background: #202a23; }
-:root[data-theme="dark"] .resume-education-section .resume-entry-heading { color: #e1ebe2; }
-:root[data-theme="dark"] .resume-education-section .add-action { color: #a8d1ad; }
+:root[data-theme="dark"] .profile-education-section .form-field select option { border-color: var(--border-color); background: var(--page-background); color: var(--text-primary); color-scheme: dark; }
+:root[data-theme="dark"] .profile-education-section .form-field input::placeholder { color: var(--text-muted); }
+:root[data-theme="dark"] .profile-interests-section .choice-option { border-color: var(--border-color); background: var(--surface); color: var(--text-primary); }
+:root[data-theme="dark"] .profile-interests-section .choice-option--selected { border-color: rgb(99 102 241 / 55%); background: rgb(99 102 241 / 14%); color: #c7d2fe; }
+:root[data-theme="dark"] .profile-interests-section .choice-option:not(.choice-option--selected):hover { border-color: var(--accent-hover); background: var(--surface-raised); }
+:root[data-theme="dark"] .profile-interests-section .choice-check { border-color: var(--border-color); }
+:root[data-theme="dark"] .profile-interests-section .choice-option--selected .choice-check { border-color: var(--accent-primary); background: var(--accent-primary); color: #fff; }
+:root[data-theme="dark"] .resume-education-section .resume-entry { border-color: var(--border-color); background: var(--surface); }
+:root[data-theme="dark"] .resume-education-section .resume-entry-heading { color: var(--text-primary); }
+:root[data-theme="dark"] .resume-education-section .add-action { color: #a5b4fc; }
 :root[data-theme="dark"] .resume-education-section .remove-action { color: #f0b7a9; }
 :root[data-theme="dark"] .resume-education-section .remove-action:hover { background: #3b2824; }
-:root[data-theme="dark"] .skill-gap-page .learning-load-more { border-color: #718c6b; background: #2a3b2d; color: #e1ebe2; }
-:root[data-theme="dark"] .skill-gap-page .learning-load-more:not(:disabled):hover { border-color: #91b394; background: #354a38; }
-:root[data-theme="dark"] .skill-gap-page .learning-load-more:not(:disabled):active { background: #405b43; }
-:root[data-theme="dark"] .skill-gap-page .learning-load-more:disabled { border-color: #506050; background: #29342b; color: #b7c4b8; }
-:root[data-theme="dark"] .skill-gap-page .youtube-video-copy strong { color: #e6eee7; }
-:root[data-theme="dark"] .skill-gap-page .youtube-video-copy small { color: #bac7bc; }
-:root[data-theme="dark"] .skill-gap-page .youtube-watch-action { border-color: #45564a; color: #b7d9b6; }
-:root[data-theme="dark"] .skill-gap-page .youtube-video-link:hover .youtube-watch-action { color: #d0e7cc; }
+:root[data-theme="dark"] .skill-gap-page .learning-load-more { border-color: var(--border-color); background: var(--surface); color: var(--text-primary); }
+:root[data-theme="dark"] .skill-gap-page .learning-load-more:not(:disabled):hover,
+:root[data-theme="dark"] .skill-gap-page .learning-load-more:not(:disabled):active { border-color: var(--accent-hover); background: rgb(99 102 241 / 14%); }
+:root[data-theme="dark"] .skill-gap-page .learning-load-more:disabled { border-color: var(--border-color); background: var(--surface); color: var(--text-muted); }
+:root[data-theme="dark"] .skill-gap-page .youtube-video-copy strong { color: var(--text-primary); }
+:root[data-theme="dark"] .skill-gap-page .youtube-video-copy small { color: var(--text-secondary); }
+:root[data-theme="dark"] .skill-gap-page .youtube-watch-action { border-color: var(--border-color); color: #a5b4fc; }
+:root[data-theme="dark"] .skill-gap-page .youtube-video-link:hover .youtube-watch-action { color: var(--accent-hover); }
 
 .profile-showcase,
 .profile-showcase-panel {
@@ -2580,8 +2589,8 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 .job-match-skill-list--unverified li { background: var(--paper); color: var(--ink-subtle); }
 .job-match-learn { min-height: 31px; padding: 4px 8px; color: var(--green); font-size: 10px; }
 .job-match-limitations { margin-top: 21px; padding-top: 15px; border-top: 1px solid var(--line); }
-:root[data-theme="dark"] .job-match-field textarea { border-color: var(--line); background: #19221c; color: var(--ink); }
-:root[data-theme="dark"] .job-match-resume-upload input[type="file"] { border-color: var(--line); background: #19221c; color: var(--ink); }
+:root[data-theme="dark"] .job-match-field textarea { border-color: var(--border-color); background: var(--page-background); color: var(--text-primary); }
+:root[data-theme="dark"] .job-match-resume-upload input[type="file"] { border-color: var(--border-color); background: var(--page-background); color: var(--text-primary); }
 :root[data-theme="dark"] .job-match-error { border-color: #a85b4d; background: #3b2824; color: #f0b7a9; }
 :root[data-theme="dark"] .job-match-state,
 :root[data-theme="dark"] .job-match-form,
@@ -2608,4 +2617,1096 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
   :root[data-theme="dark"] body { background: #fff !important; }
   :root[data-theme="dark"] .resume-print-document,
   :root[data-theme="dark"] .resume-print-document * { color: #000 !important; background: #fff !important; }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  color: #fafafa;
+  background: #050505;
+  --ink: #fafafa;
+  --muted: #a1a1aa;
+  --ink-subtle: #c4c4cc;
+  --ink-faint: #71717a;
+  --surface-tint: #171717;
+  --accent-text: #a5b4fc;
+  --paper: #0a0a0a;
+  --green: #6366f1;
+  --lime: #e0e7ff;
+  --line: #262626;
+  --forest-deep: #fafafa;
+  --surface: #101010;
+  --surface-strong: #171717;
+  --sidebar-bg: #0a0a0a;
+  --page-background: #050505;
+  --surface-raised: #171717;
+  --border-color: #262626;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --accent-primary: #6366f1;
+  --accent-secondary: #8b5cf6;
+  --accent-hover: #818cf8;
+  --status-success-text: #c3e0c2;
+  --status-success-surface: #263b2b;
+  --status-success-border: #4a6850;
+  --status-success-fill: #77aa80;
+  --shadow-soft: 0 12px 28px rgb(0 0 0 / 20%);
+  --focus-ring: 0 0 0 3px rgb(99 102 241 / 30%);
+}
+
+:root[data-theme="dark"] body,
+:root[data-theme="dark"] .site-root,
+:root[data-theme="dark"] .app-shell-root {
+  background: var(--page-background);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] :is(.site-root, .app-shell-root) :is(h1, h2, h3, h4, h5, dt, label, .brand, .site-nav a) {
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] :where(button, a, input, select, textarea):focus-visible {
+  outline-color: var(--accent-hover);
+  box-shadow: var(--focus-ring);
+}
+
+:root[data-theme="dark"] .app-shell-root {
+  background: var(--page-background);
+}
+
+:root[data-theme="dark"] .app-sidebar {
+  background: var(--sidebar-bg);
+  border-color: var(--border-color);
+}
+
+:root[data-theme="dark"] .sidebar-section-title,
+:root[data-theme="dark"] .sidebar-link,
+:root[data-theme="dark"] .app-breadcrumb {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .sidebar-link:hover,
+:root[data-theme="dark"] .sidebar-link.is-active {
+  border-color: rgb(99 102 241 / 24%);
+  background: rgb(99 102 241 / 12%);
+  color: #c7d2fe;
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .sidebar-collapse-toggle,
+:root[data-theme="dark"] .sidebar-account,
+:root[data-theme="dark"] .app-topbar {
+  border-color: var(--border-color);
+  background: var(--surface);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .sidebar-account__avatar,
+:root[data-theme="dark"] .app-user-pill {
+  background: rgb(99 102 241 / 14%);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .sidebar-account__meta small {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .site-header,
+:root[data-theme="dark"] .site-footer {
+  border-color: var(--border-color);
+}
+
+:root[data-theme="dark"] .site-nav,
+:root[data-theme="dark"] .account-username,
+:root[data-theme="dark"] .account-status {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .brand-ai,
+:root[data-theme="dark"] .site-nav a:hover,
+:root[data-theme="dark"] .site-nav a[aria-current="page"],
+:root[data-theme="dark"] .brand[aria-current="page"] {
+  color: #a5b4fc;
+}
+
+:root[data-theme="dark"] .brand-mark {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+:root[data-theme="dark"] .nav-cta,
+:root[data-theme="dark"] .account-action,
+:root[data-theme="dark"] .auth-nav-link,
+:root[data-theme="dark"] .mobile-menu-toggle,
+:root[data-theme="dark"] .button-secondary,
+:root[data-theme="dark"] .google-signin {
+  border-color: var(--border-color);
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .nav-cta:hover,
+:root[data-theme="dark"] .account-action:hover,
+:root[data-theme="dark"] .auth-nav-link:hover,
+:root[data-theme="dark"] .mobile-menu-toggle:hover,
+:root[data-theme="dark"] .button-secondary:hover,
+:root[data-theme="dark"] .google-signin:hover {
+  border-color: #3f3f46;
+  background: var(--surface-raised);
+}
+
+:root[data-theme="dark"] .mobile-menu-toggle span {
+  background: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .button-primary {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+:root[data-theme="dark"] .button-primary:hover {
+  background: var(--accent-hover);
+}
+
+:root[data-theme="dark"] .button-primary span,
+:root[data-theme="dark"] .button-secondary span,
+:root[data-theme="dark"] .nav-cta span,
+:root[data-theme="dark"] .text-action,
+:root[data-theme="dark"] .career-fit strong,
+:root[data-theme="dark"] .skill-gap-fit,
+:root[data-theme="dark"] .job-match-score strong,
+:root[data-theme="dark"] .job-tracker-summary strong {
+  color: #a5b4fc;
+}
+
+:root[data-theme="dark"] .eyebrow,
+:root[data-theme="dark"] .eyebrow-dot,
+:root[data-theme="dark"] .highlight-number,
+:root[data-theme="dark"] .highlight-arrow,
+:root[data-theme="dark"] .career-card-number {
+  color: #a5b4fc;
+}
+
+:root[data-theme="dark"] .eyebrow-dot,
+:root[data-theme="dark"] .api-status--connected .api-status-indicator {
+  background: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .api-status,
+:root[data-theme="dark"] .api-status--connected {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .hero-copy h1 span,
+:root[data-theme="dark"] .label-star {
+  color: var(--accent-hover);
+}
+
+:root[data-theme="dark"] .workflow-steps li,
+:root[data-theme="dark"] .highlight {
+  border-color: var(--border-color);
+  background: var(--surface);
+}
+
+:root[data-theme="dark"] .hero-description,
+:root[data-theme="dark"] .hero-note p,
+:root[data-theme="dark"] .highlight p,
+:root[data-theme="dark"] .site-footer p,
+:root[data-theme="dark"] .footer-credit,
+:root[data-theme="dark"] .settings-header p:last-child {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .explore-section,
+:root[data-theme="dark"] .workflow-section {
+  border-color: var(--border-color);
+  background: var(--paper);
+}
+
+:root[data-theme="dark"] .highlight-grid,
+:root[data-theme="dark"] .highlight + .highlight {
+  border-color: var(--border-color);
+}
+
+:root[data-theme="dark"] .home-cta {
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .home-cta .eyebrow {
+  color: #a5b4fc;
+}
+
+:root[data-theme="dark"] .home-cta h2 {
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .home-cta .button-primary {
+  border-color: transparent;
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+:root[data-theme="dark"] .home-cta .button-primary:hover {
+  background: var(--accent-hover);
+}
+
+:root[data-theme="dark"] .path-card,
+:root[data-theme="dark"] .visual-label {
+  border: 1px solid var(--border-color);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .path-kicker,
+:root[data-theme="dark"] .path-card p,
+:root[data-theme="dark"] .visual-index {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .path-icon,
+:root[data-theme="dark"] .note-mark,
+:root[data-theme="dark"] .skill-row span,
+:root[data-theme="dark"] .profile-section-number,
+:root[data-theme="dark"] .recommendation-state-mark,
+:root[data-theme="dark"] .dashboard-activity-mark {
+  background: rgb(99 102 241 / 14%);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .skill-row span {
+  border: 1px solid rgb(99 102 241 / 20%);
+}
+
+:root[data-theme="dark"] .profile-avatar {
+  border-color: var(--surface);
+  background: var(--surface-raised);
+  color: #c7d2fe;
+  box-shadow: 0 0 0 1px var(--border-color);
+}
+
+:root[data-theme="dark"] .profile-photo-progress > span {
+  background: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .auth-panel,
+:root[data-theme="dark"] .profile-form,
+:root[data-theme="dark"] .profile-completion,
+:root[data-theme="dark"] .profile-load-state,
+:root[data-theme="dark"] .profile-migration,
+:root[data-theme="dark"] .repeatable-item,
+:root[data-theme="dark"] .history-preview,
+:root[data-theme="dark"] .recommendation-state,
+:root[data-theme="dark"] .recommendation-controls,
+:root[data-theme="dark"] .career-recommendation,
+:root[data-theme="dark"] .career-roadmap,
+:root[data-theme="dark"] .career-next-steps,
+:root[data-theme="dark"] .skill-gap-state,
+:root[data-theme="dark"] .skill-gap-page .learning-language-step,
+:root[data-theme="dark"] .skill-gap-page .learning-language-option,
+:root[data-theme="dark"] .skill-gap-page .skill-language-result,
+:root[data-theme="dark"] .skill-gap-page .skill-resource,
+:root[data-theme="dark"] .skill-gap-page .youtube-video-link,
+:root[data-theme="dark"] .skill-gap-page .learning-video-skeleton,
+:root[data-theme="dark"] .career-explorer,
+:root[data-theme="dark"] .career-explorer-role,
+:root[data-theme="dark"] .career-explorer-detail,
+:root[data-theme="dark"] .learning-roadmap-preview,
+:root[data-theme="dark"] .dashboard-current-pathway,
+:root[data-theme="dark"] .dashboard-metric,
+:root[data-theme="dark"] .dashboard-section,
+:root[data-theme="dark"] .dashboard-mini-card,
+:root[data-theme="dark"] .resume-editor,
+:root[data-theme="dark"] .resume-entry,
+:root[data-theme="dark"] .settings-account-details > div,
+:root[data-theme="dark"] .job-match-form,
+:root[data-theme="dark"] .job-match-state,
+:root[data-theme="dark"] .job-match-results,
+:root[data-theme="dark"] .job-tracker-summary article,
+:root[data-theme="dark"] .job-tracker-form,
+:root[data-theme="dark"] .job-tracker-list-section,
+:root[data-theme="dark"] .job-tracker-card,
+:root[data-theme="dark"] .job-discovery-search,
+:root[data-theme="dark"] .job-discovery-results,
+:root[data-theme="dark"] .job-discovery-external,
+:root[data-theme="dark"] .job-discovery-company-profile,
+:root[data-theme="dark"] .job-discovery-card {
+  border-color: var(--border-color);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .career-recommendation:hover,
+:root[data-theme="dark"] .dashboard-mini-card:hover,
+:root[data-theme="dark"] .skill-gap-page .youtube-video-link:hover {
+  border-color: #3f3f46;
+  box-shadow: 0 12px 26px rgb(0 0 0 / 24%);
+}
+
+:root[data-theme="dark"] .button:hover,
+:root[data-theme="dark"] .career-recommendation:hover,
+:root[data-theme="dark"] .dashboard-mini-card:hover {
+  transform: translateY(-1px);
+}
+
+:root[data-theme="dark"] .skill-gap-page .youtube-video-link:hover {
+  transform: translateY(-2px);
+}
+
+:root[data-theme="dark"] .career-fit,
+:root[data-theme="dark"] .career-explorer-fit,
+:root[data-theme="dark"] .career-pathway-choice,
+:root[data-theme="dark"] .career-project-milestone,
+:root[data-theme="dark"] .career-resource-note,
+:root[data-theme="dark"] .career-explorer-roadmap,
+:root[data-theme="dark"] .learning-roadmap-preview,
+:root[data-theme="dark"] .dashboard-current-pathway,
+:root[data-theme="dark"] .dashboard-empty,
+:root[data-theme="dark"] .dashboard-disclaimer,
+:root[data-theme="dark"] .job-match-skill-list li,
+:root[data-theme="dark"] .job-match-skill-list--unverified li,
+:root[data-theme="dark"] .job-match-notice,
+:root[data-theme="dark"] .job-match-inline-note,
+:root[data-theme="dark"] .job-discovery-result-tools,
+:root[data-theme="dark"] .job-discovery-profile-note,
+:root[data-theme="dark"] .job-discovery-compare,
+:root[data-theme="dark"] .job-discovery-roadmap,
+:root[data-theme="dark"] .job-discovery-coverage,
+:root[data-theme="dark"] .job-discovery-source-note,
+:root[data-theme="dark"] .job-tracker-follow-up {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .career-card-heading h3,
+:root[data-theme="dark"] .career-recommendation h4,
+:root[data-theme="dark"] .career-roadmap ol,
+:root[data-theme="dark"] .career-next-steps ol,
+:root[data-theme="dark"] .career-next-steps p,
+:root[data-theme="dark"] .career-reasoning,
+:root[data-theme="dark"] .career-fit span,
+:root[data-theme="dark"] .career-card-domain,
+:root[data-theme="dark"] .skill-gap-sequence li,
+:root[data-theme="dark"] .skill-gap-evidence-list li,
+:root[data-theme="dark"] .dashboard-metric > span,
+:root[data-theme="dark"] .dashboard-metric > small,
+:root[data-theme="dark"] .dashboard-section-heading h2,
+:root[data-theme="dark"] .dashboard-mini-card strong,
+:root[data-theme="dark"] .dashboard-mini-card small,
+:root[data-theme="dark"] .dashboard-skill-list li strong,
+:root[data-theme="dark"] .dashboard-career-heading h3,
+:root[data-theme="dark"] .dashboard-activity-list li strong,
+:root[data-theme="dark"] .settings-section-heading h2,
+:root[data-theme="dark"] .resume-editor-section > h2,
+:root[data-theme="dark"] .resume-editor-heading h2,
+:root[data-theme="dark"] .resume-preview-heading h2,
+:root[data-theme="dark"] .job-discovery-results-heading h2,
+:root[data-theme="dark"] .job-discovery-external h2,
+:root[data-theme="dark"] .job-discovery-card-title h3,
+:root[data-theme="dark"] .job-tracker-card-title h3,
+:root[data-theme="dark"] .job-match-skill-groups h3 {
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .career-detail-disclosure,
+:root[data-theme="dark"] .career-detail-disclosure > summary,
+:root[data-theme="dark"] .dashboard-skill-list li,
+:root[data-theme="dark"] .dashboard-career,
+:root[data-theme="dark"] .dashboard-activity-list li,
+:root[data-theme="dark"] .profile-actions,
+:root[data-theme="dark"] .profile-history,
+:root[data-theme="dark"] .profile-history-list,
+:root[data-theme="dark"] .profile-history-item,
+:root[data-theme="dark"] .career-card-heading,
+:root[data-theme="dark"] .career-skill-grid,
+:root[data-theme="dark"] .job-match-results-header,
+:root[data-theme="dark"] .job-match-metrics,
+:root[data-theme="dark"] .job-match-limitations,
+:root[data-theme="dark"] .job-discovery-card footer,
+:root[data-theme="dark"] .job-tracker-card-actions {
+  border-color: var(--border-color);
+}
+
+:root[data-theme="dark"] .dashboard-metric > strong,
+:root[data-theme="dark"] .dashboard-career-heading > span,
+:root[data-theme="dark"] .dashboard-activity-list li > div span,
+:root[data-theme="dark"] .dashboard-activity time,
+:root[data-theme="dark"] .dashboard-skill-list li > div span,
+:root[data-theme="dark"] .settings-account-details dt,
+:root[data-theme="dark"] .settings-account-details dd,
+:root[data-theme="dark"] .resume-entry-heading,
+:root[data-theme="dark"] .profile-history-summary strong,
+:root[data-theme="dark"] .profile-history-summary span,
+:root[data-theme="dark"] .job-tracker-card-title > span,
+:root[data-theme="dark"] .job-discovery-card dd,
+:root[data-theme="dark"] .job-discovery-card dl dt,
+:root[data-theme="dark"] .job-discovery-description {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .profile-section-heading h2,
+:root[data-theme="dark"] .profile-completion-heading h2,
+:root[data-theme="dark"] .settings-header h1,
+:root[data-theme="dark"] .settings-section-heading h2,
+:root[data-theme="dark"] .auth-heading h1,
+:root[data-theme="dark"] .resume-builder-header h1 {
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .profile-empty-entry,
+:root[data-theme="dark"] .choice-option,
+:root[data-theme="dark"] .choice-option--selected,
+:root[data-theme="dark"] .profile-completion progress,
+:root[data-theme="dark"] .profile-completion progress::-webkit-progress-bar,
+:root[data-theme="dark"] .dashboard-metric progress,
+:root[data-theme="dark"] .dashboard-metric progress::-webkit-progress-bar {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+}
+
+:root[data-theme="dark"] .profile-empty-entry strong,
+:root[data-theme="dark"] .profile-empty-entry p,
+:root[data-theme="dark"] .form-field label,
+:root[data-theme="dark"] .form-field > span,
+:root[data-theme="dark"] .form-hint,
+:root[data-theme="dark"] .auth-heading > p:last-child,
+:root[data-theme="dark"] .profile-intro > p:last-child,
+:root[data-theme="dark"] .recommendations-intro > p:last-child,
+:root[data-theme="dark"] .skill-gap-intro > p:last-child,
+:root[data-theme="dark"] .job-match-intro > p:last-child,
+:root[data-theme="dark"] .job-tracker-intro > p:last-child,
+:root[data-theme="dark"] .job-discovery-header p:last-child,
+:root[data-theme="dark"] .resume-builder-header > div:first-child > p:last-child,
+:root[data-theme="dark"] .settings-section-heading p {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea {
+  border-color: var(--border-color);
+  background-color: var(--paper);
+  color: var(--text-primary);
+  color-scheme: dark;
+}
+
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .form-field input:focus,
+:root[data-theme="dark"] .form-field select:focus,
+:root[data-theme="dark"] .form-field textarea:focus,
+:root[data-theme="dark"] .job-match-field textarea:focus-visible,
+:root[data-theme="dark"] .job-match-resume-upload input[type="file"]:focus-visible {
+  border-color: var(--accent-hover);
+  box-shadow: var(--focus-ring);
+}
+
+:root[data-theme="dark"] input[type="checkbox"],
+:root[data-theme="dark"] input[type="radio"],
+:root[data-theme="dark"] progress {
+  accent-color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .profile-education-section .form-field input,
+:root[data-theme="dark"] .profile-education-section .form-field select,
+:root[data-theme="dark"] .profile-education-section .form-field select option {
+  border-color: var(--border-color);
+  background: var(--paper);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .profile-education-section .form-field input::placeholder {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .profile-interests-section .choice-option {
+  border-color: var(--border-color);
+  background: var(--surface);
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .profile-interests-section .choice-option--selected,
+:root[data-theme="dark"] .profile-interests-section .choice-option:not(.choice-option--selected):hover {
+  border-color: rgb(99 102 241 / 45%);
+  background: rgb(99 102 241 / 14%);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .profile-interests-section .choice-check,
+:root[data-theme="dark"] .profile-interests-section .choice-option--selected .choice-check {
+  border-color: #818cf8;
+}
+
+:root[data-theme="dark"] .profile-interests-section .choice-option--selected .choice-check {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+:root[data-theme="dark"] .profile-interests-section .choice-option:focus-within {
+  outline-color: var(--accent-hover);
+}
+
+:root[data-theme="dark"] .resume-education-section .resume-entry {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+}
+
+:root[data-theme="dark"] .resume-education-section .add-action {
+  color: var(--accent-hover);
+}
+
+:root[data-theme="dark"] .skill-gap-page .learning-load-more {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .skill-gap-page .learning-load-more:not(:disabled):hover,
+:root[data-theme="dark"] .skill-gap-page .learning-load-more:not(:disabled):active {
+  border-color: rgb(99 102 241 / 45%);
+  background: rgb(99 102 241 / 14%);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .skill-gap-page .learning-load-more:disabled {
+  border-color: var(--border-color);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .skill-gap-page .youtube-watch-action {
+  border-color: var(--border-color);
+  color: var(--accent-hover);
+}
+
+:root[data-theme="dark"] .skill-gap-page .youtube-video-link:hover .youtube-watch-action {
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .skill-gap-page .learning-video-skeleton-thumbnail,
+:root[data-theme="dark"] .skill-gap-page .learning-video-skeleton-line {
+  background: #262626;
+  animation: none;
+}
+
+:root[data-theme="dark"] .form-field input::placeholder,
+:root[data-theme="dark"] .skill-entry input::placeholder {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .settings-theme-options {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+}
+
+:root[data-theme="dark"] .settings-theme-option {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .settings-theme-option--selected {
+  border-color: rgb(99 102 241 / 38%);
+  background: rgb(99 102 241 / 14%);
+  color: #c7d2fe;
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .settings-theme-swatch {
+  border-color: #71717a;
+}
+
+:root[data-theme="dark"] .settings-theme-swatch--dark {
+  background: #050505;
+}
+
+:root[data-theme="dark"] .job-discovery-modes,
+:root[data-theme="dark"] .job-discovery-category-options,
+:root[data-theme="dark"] .job-discovery-result-tools,
+:root[data-theme="dark"] .job-discovery-profile-note,
+:root[data-theme="dark"] .job-discovery-compare,
+:root[data-theme="dark"] .job-discovery-roadmap {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+}
+
+:root[data-theme="dark"] .job-discovery-search .form-field input,
+:root[data-theme="dark"] .job-discovery-search .form-field select,
+:root[data-theme="dark"] .job-discovery-category-picker summary,
+:root[data-theme="dark"] .job-discovery-result-tools input,
+:root[data-theme="dark"] .job-discovery-result-tools select,
+:root[data-theme="dark"] .job-discovery-roadmap-heading select,
+:root[data-theme="dark"] .job-tracker-form .form-field input,
+:root[data-theme="dark"] .job-tracker-form .form-field select,
+:root[data-theme="dark"] .job-tracker-form .form-field textarea,
+:root[data-theme="dark"] .job-tracker-controls .form-field input,
+:root[data-theme="dark"] .job-tracker-controls .form-field select {
+  border-color: var(--border-color);
+  background: var(--paper);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .job-discovery-mode {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .job-discovery-mode.is-active {
+  background: var(--accent-primary);
+  color: #fff;
+}
+
+:root[data-theme="dark"] .recommendation-tags li,
+:root[data-theme="dark"] .job-discovery-badge,
+:root[data-theme="dark"] .job-discovery-category,
+:root[data-theme="dark"] .job-discovery-experience-badge,
+:root[data-theme="dark"] .job-tracker-status {
+  border-color: rgb(99 102 241 / 28%);
+  background: rgb(99 102 241 / 12%);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .recommendation-tags--gap li,
+:root[data-theme="dark"] .job-discovery-experience-badge--title,
+:root[data-theme="dark"] .job-discovery-experience-badge--description-inferred {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .job-tracker-card--upcoming {
+  border-left-color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .job-tracker-card--overdue {
+  border-left-color: #f87171;
+}
+
+:root[data-theme="dark"] .job-tracker-status--interview,
+:root[data-theme="dark"] .job-tracker-status--offer {
+  border-color: rgb(139 92 246 / 35%);
+  background: rgb(139 92 246 / 14%);
+  color: #ddd6fe;
+}
+
+:root[data-theme="dark"] .job-tracker-status--rejected,
+:root[data-theme="dark"] .job-tracker-status--withdrawn,
+:root[data-theme="dark"] .job-tracker-follow-up--overdue,
+:root[data-theme="dark"] .job-tracker-error,
+:root[data-theme="dark"] .job-match-error,
+:root[data-theme="dark"] .job-discovery-error,
+:root[data-theme="dark"] .job-discovery-state--error,
+:root[data-theme="dark"] .auth-error,
+:root[data-theme="dark"] .settings-feedback--error {
+  border-color: #7f1d1d;
+  background: #2a1111;
+  color: #fca5a5;
+}
+
+:root[data-theme="dark"] .recommendation-error,
+:root[data-theme="dark"] .job-discovery-partial-note,
+:root[data-theme="dark"] .job-discovery-company-note,
+:root[data-theme="dark"] .settings-feedback--success,
+:root[data-theme="dark"] .settings-provider-note,
+:root[data-theme="dark"] .resume-profile-notice {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .job-discovery-source-note a,
+:root[data-theme="dark"] .job-discovery-attribution a,
+:root[data-theme="dark"] .job-discovery-company-details a,
+:root[data-theme="dark"] .job-discovery-company-note a,
+:root[data-theme="dark"] .job-discovery-recommendations li a,
+:root[data-theme="dark"] .job-match-learn {
+  color: var(--accent-hover);
+}
+
+:root[data-theme="dark"] .skill-priority--beginner,
+:root[data-theme="dark"] .skill-completion-status--done,
+:root[data-theme="dark"] .skill-evidence-status--demonstrated,
+:root[data-theme="dark"] .learning-language-badge,
+:root[data-theme="dark"] .skill-sequence-number,
+:root[data-theme="dark"] .job-discovery-source-note {
+  border-color: rgb(99 102 241 / 28%);
+  background: rgb(99 102 241 / 12%);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .career-explorer-fit {
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .profile-feedback.feedback-message--success,
+:root[data-theme="dark"] .feedback-message--success,
+:root[data-theme="dark"] .auth-success {
+  border-color: rgb(99 102 241 / 28%);
+  background: rgb(99 102 241 / 12%);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .recommendation-spinner {
+  border-color: #3f3f46;
+  border-top-color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .profile-completion progress::-webkit-progress-value,
+:root[data-theme="dark"] .dashboard-metric progress::-webkit-progress-value,
+:root[data-theme="dark"] .profile-completion progress::-moz-progress-bar,
+:root[data-theme="dark"] .dashboard-metric progress::-moz-progress-bar {
+  background: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .app-sidebar-backdrop {
+  background: rgb(0 0 0 / 66%);
+}
+
+:root[data-theme="dark"] .site-nav {
+  border-color: var(--border-color);
+  background: var(--surface);
+  box-shadow: 0 16px 32px rgb(0 0 0 / 36%);
+}
+
+:root[data-theme="dark"] .site-nav a:hover,
+:root[data-theme="dark"] .job-discovery-external li a:hover {
+  background: var(--surface-raised);
+}
+
+:root[data-theme="dark"] .career-recommendation,
+:root[data-theme="dark"] .dashboard-mini-card,
+:root[data-theme="dark"] .job-tracker-card,
+:root[data-theme="dark"] .job-discovery-card,
+:root[data-theme="dark"] .skill-gap-page .skill-resource,
+:root[data-theme="dark"] .skill-gap-page .youtube-video-link,
+:root[data-theme="dark"] .button,
+:root[data-theme="dark"] .button-secondary,
+:root[data-theme="dark"] .sidebar-link,
+:root[data-theme="dark"] .site-nav a,
+:root[data-theme="dark"] .nav-cta,
+:root[data-theme="dark"] .settings-theme-option {
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+:root[data-theme="dark"] .workflow-steps li > span {
+  color: var(--accent-hover);
+}
+
+:root[data-theme="dark"] .api-status--connected {
+  color: var(--status-success-text);
+}
+
+:root[data-theme="dark"] .api-status--connected .api-status-indicator {
+  background: var(--status-success-fill);
+}
+
+:root[data-theme="dark"] .settings-feedback--success,
+:root[data-theme="dark"] .profile-feedback.feedback-message--success,
+:root[data-theme="dark"] .feedback-message--success,
+:root[data-theme="dark"] .auth-success {
+  border-color: var(--status-success-border);
+  background: var(--status-success-surface);
+  color: var(--status-success-text);
+}
+
+:root[data-theme="dark"] .skill-completion-status--done,
+:root[data-theme="dark"] .skill-evidence-status--demonstrated,
+:root[data-theme="dark"] .job-tracker-status--offer {
+  border-color: var(--status-success-border);
+  background: var(--status-success-surface);
+  color: var(--status-success-text);
+}
+
+:root[data-theme="dark"] .profile-completion progress::-webkit-progress-value,
+:root[data-theme="dark"] .profile-completion progress::-moz-progress-bar {
+  background: var(--status-success-fill);
+}
+
+:root[data-theme="dark"] .job-discovery-error,
+:root[data-theme="dark"] .job-discovery-state--error {
+  color: #f0b7a9;
+}
+
+:root[data-theme="dark"] .profile-avatar {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+  color: #c7d2fe;
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .hero-photo {
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .hero-visual::after {
+  background: linear-gradient(180deg, transparent 55%, rgb(0 0 0 / 30%));
+}
+
+:root[data-theme="dark"] .note-mark,
+:root[data-theme="dark"] .path-icon,
+:root[data-theme="dark"] .profile-section-number,
+:root[data-theme="dark"] .recommendation-state-mark,
+:root[data-theme="dark"] .dashboard-activity-mark,
+:root[data-theme="dark"] .skill-sequence-number {
+  border-color: var(--border-color);
+  background: rgb(99 102 241 / 14%);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .path-card,
+:root[data-theme="dark"] .visual-label,
+:root[data-theme="dark"] .highlight,
+:root[data-theme="dark"] .workflow-steps li,
+:root[data-theme="dark"] .profile-form,
+:root[data-theme="dark"] .profile-completion,
+:root[data-theme="dark"] .profile-load-state,
+:root[data-theme="dark"] .profile-migration,
+:root[data-theme="dark"] .repeatable-item,
+:root[data-theme="dark"] .history-preview,
+:root[data-theme="dark"] .recommendation-state,
+:root[data-theme="dark"] .recommendation-controls,
+:root[data-theme="dark"] .career-recommendation,
+:root[data-theme="dark"] .career-roadmap,
+:root[data-theme="dark"] .career-next-steps,
+:root[data-theme="dark"] .auth-panel,
+:root[data-theme="dark"] .skill-gap-page .learning-language-step,
+:root[data-theme="dark"] .skill-gap-page .learning-language-option,
+:root[data-theme="dark"] .skill-gap-page .skill-language-result,
+:root[data-theme="dark"] .skill-gap-page .skill-resource,
+:root[data-theme="dark"] .skill-gap-page .youtube-video-link,
+:root[data-theme="dark"] .skill-gap-page .learning-video-skeleton,
+:root[data-theme="dark"] .career-explorer,
+:root[data-theme="dark"] .career-explorer-role,
+:root[data-theme="dark"] .career-explorer-detail,
+:root[data-theme="dark"] .learning-roadmap-preview,
+:root[data-theme="dark"] .dashboard-current-pathway,
+:root[data-theme="dark"] .dashboard-metric,
+:root[data-theme="dark"] .dashboard-section,
+:root[data-theme="dark"] .resume-editor,
+:root[data-theme="dark"] .settings-account-details > div,
+:root[data-theme="dark"] .profile-empty-entry,
+:root[data-theme="dark"] .dashboard-empty,
+:root[data-theme="dark"] .career-pathway-choice,
+:root[data-theme="dark"] .selected-career-pathway,
+:root[data-theme="dark"] .learning-project-milestone,
+:root[data-theme="dark"] .learning-skill-context,
+:root[data-theme="dark"] .resume-profile-notice,
+:root[data-theme="dark"] .recommendation-source-notice,
+:root[data-theme="dark"] .settings-provider-note,
+:root[data-theme="dark"] .skill-gap-state {
+  border-color: var(--border-color);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root[data-theme="dark"] .explore-section,
+:root[data-theme="dark"] .workflow-section {
+  background: var(--paper);
+}
+
+:root[data-theme="dark"] .profile-empty-entry strong,
+:root[data-theme="dark"] .career-project-milestone strong,
+:root[data-theme="dark"] .learning-project-milestone strong,
+:root[data-theme="dark"] .selected-career-pathway strong,
+:root[data-theme="dark"] .career-pathway-choice strong,
+:root[data-theme="dark"] .workflow-heading h2,
+:root[data-theme="dark"] .workflow-steps strong,
+:root[data-theme="dark"] .profile-section-heading h2,
+:root[data-theme="dark"] .profile-completion-heading h2,
+:root[data-theme="dark"] .career-card-heading h3,
+:root[data-theme="dark"] .career-explorer-heading h2,
+:root[data-theme="dark"] .career-explorer-detail-heading h3,
+:root[data-theme="dark"] .career-explorer-detail h4,
+:root[data-theme="dark"] .learning-roadmap-preview h2,
+:root[data-theme="dark"] .dashboard-section-heading h2,
+:root[data-theme="dark"] .dashboard-skill-list li strong,
+:root[data-theme="dark"] .dashboard-career-heading h3,
+:root[data-theme="dark"] .dashboard-activity-list li strong,
+:root[data-theme="dark"] .settings-section-heading h2,
+:root[data-theme="dark"] .form-field label,
+:root[data-theme="dark"] .auth-form .form-field span,
+:root[data-theme="dark"] .career-recommendation h4,
+:root[data-theme="dark"] .choice-option,
+:root[data-theme="dark"] .career-explorer-role,
+:root[data-theme="dark"] .career-explorer-detail,
+:root[data-theme="dark"] .history-preview,
+:root[data-theme="dark"] .career-pathway-choice,
+:root[data-theme="dark"] .job-match-skill-groups h3 {
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .profile-section-heading p,
+:root[data-theme="dark"] .profile-load-state p,
+:root[data-theme="dark"] .profile-migration p,
+:root[data-theme="dark"] .history-status,
+:root[data-theme="dark"] .history-preview-heading p,
+:root[data-theme="dark"] .history-details dd,
+:root[data-theme="dark"] .recommendation-state p,
+:root[data-theme="dark"] .recommendation-controls p,
+:root[data-theme="dark"] .career-reasoning,
+:root[data-theme="dark"] .career-explorer-heading p:last-child,
+:root[data-theme="dark"] .career-explorer-detail-copy p,
+:root[data-theme="dark"] .career-explorer-detail-copy li,
+:root[data-theme="dark"] .career-explorer-columns p,
+:root[data-theme="dark"] .career-explorer-columns li,
+:root[data-theme="dark"] .dashboard-welcome > div > p:last-child,
+:root[data-theme="dark"] .dashboard-current-pathway small,
+:root[data-theme="dark"] .dashboard-empty,
+:root[data-theme="dark"] .dashboard-career > p,
+:root[data-theme="dark"] .dashboard-disclaimer,
+:root[data-theme="dark"] .settings-section-heading p,
+:root[data-theme="dark"] .profile-empty-entry p,
+:root[data-theme="dark"] .career-pathway-choice p,
+:root[data-theme="dark"] .career-project-milestone p,
+:root[data-theme="dark"] .career-resource-note,
+:root[data-theme="dark"] .career-roadmap ol,
+:root[data-theme="dark"] .career-next-steps ol,
+:root[data-theme="dark"] .career-next-steps p,
+:root[data-theme="dark"] .recommendation-source-notice p,
+:root[data-theme="dark"] .skill-gap-reason,
+:root[data-theme="dark"] .learning-language-step > .learning-language-note,
+:root[data-theme="dark"] .job-match-notice,
+:root[data-theme="dark"] .job-match-inline-note {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .form-field input,
+:root[data-theme="dark"] .form-field select,
+:root[data-theme="dark"] .form-field textarea,
+:root[data-theme="dark"] .skill-entry input,
+:root[data-theme="dark"] .skill-gap-selector select,
+:root[data-theme="dark"] .skill-gap-career-select select,
+:root[data-theme="dark"] .job-match-field textarea,
+:root[data-theme="dark"] .job-match-resume-upload input[type="file"] {
+  border-color: var(--border-color);
+  background: var(--page-background);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .form-field input::placeholder,
+:root[data-theme="dark"] .skill-entry input::placeholder {
+  color: var(--text-muted);
+}
+
+:root[data-theme="dark"] .choice-option--selected,
+:root[data-theme="dark"] .career-explorer-role:hover,
+:root[data-theme="dark"] .career-explorer-role--selected,
+:root[data-theme="dark"] .skill-gap-page .learning-language-option--selected,
+:root[data-theme="dark"] .settings-theme-option--selected {
+  border-color: rgb(99 102 241 / 55%);
+  background: rgb(99 102 241 / 14%);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .choice-check,
+:root[data-theme="dark"] .career-resource-links a,
+:root[data-theme="dark"] .skill-list li,
+:root[data-theme="dark"] .recommendation-tags li,
+:root[data-theme="dark"] .job-match-skill-list li {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .career-detail-disclosure > summary,
+:root[data-theme="dark"] .career-resource-links a,
+:root[data-theme="dark"] .career-resource-links a span,
+:root[data-theme="dark"] .career-card-domain,
+:root[data-theme="dark"] .career-explorer-role small,
+:root[data-theme="dark"] .career-explorer-roadmap-heading > span,
+:root[data-theme="dark"] .dashboard-metric > span,
+:root[data-theme="dark"] .dashboard-metric > small,
+:root[data-theme="dark"] .dashboard-metric > strong,
+:root[data-theme="dark"] .dashboard-current-pathway span,
+:root[data-theme="dark"] .dashboard-skill-list li > div span,
+:root[data-theme="dark"] .dashboard-career-heading > span,
+:root[data-theme="dark"] .dashboard-activity-list li > div span,
+:root[data-theme="dark"] .dashboard-activity-list time,
+:root[data-theme="dark"] .career-resource-links a:hover,
+:root[data-theme="dark"] .text-action,
+:root[data-theme="dark"] .small-action,
+:root[data-theme="dark"] .add-action,
+:root[data-theme="dark"] .label-star,
+:root[data-theme="dark"] .highlight-number,
+:root[data-theme="dark"] .highlight-arrow,
+:root[data-theme="dark"] .career-card-number,
+:root[data-theme="dark"] .career-explorer-roadmap-heading > span,
+:root[data-theme="dark"] .skill-sequence-number {
+  color: #a5b4fc;
+}
+
+:root[data-theme="dark"] .career-resource-links a:hover,
+:root[data-theme="dark"] .small-action:hover,
+:root[data-theme="dark"] .add-action:hover {
+  background: rgb(99 102 241 / 12%);
+}
+
+:root[data-theme="dark"] .dashboard-current-pathway {
+  border-left-color: var(--accent-primary);
+}
+
+:root[data-theme="dark"] .dashboard-current-pathway--empty {
+  border-left-color: var(--border-color);
+}
+
+:root[data-theme="dark"] .dashboard-metric progress,
+:root[data-theme="dark"] .dashboard-metric progress::-webkit-progress-bar,
+:root[data-theme="dark"] .profile-completion progress,
+:root[data-theme="dark"] .profile-completion progress::-webkit-progress-bar {
+  background: var(--surface-raised);
+}
+
+:root[data-theme="dark"] .skill-priority--beginner,
+:root[data-theme="dark"] .learning-language-badge {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+  color: #c7d2fe;
+}
+
+:root[data-theme="dark"] .settings-theme-option {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .settings-theme-swatch--dark {
+  background: var(--surface-raised);
+}
+
+:root[data-theme="dark"] .repeatable-item-heading,
+:root[data-theme="dark"] .skill-gap-sequence li,
+:root[data-theme="dark"] .skill-gap-evidence-list li,
+:root[data-theme="dark"] .skill-gap-resources section > h4,
+:root[data-theme="dark"] .skill-video-heading h5,
+:root[data-theme="dark"] .learning-roadmap-preview > ol > li > div span,
+:root[data-theme="dark"] .learning-roadmap-preview > ol > li > p,
+:root[data-theme="dark"] .career-explorer-roadmap > ol > li > div span,
+:root[data-theme="dark"] .career-explorer-roadmap > ol > li > p,
+:root[data-theme="dark"] .resume-editor .resume-entry-heading,
+:root[data-theme="dark"] .account-username,
+:root[data-theme="dark"] .account-status,
+:root[data-theme="dark"] .auth-global-notice {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .skill-gap-page .skill-resource-heading .button:focus-visible,
+:root[data-theme="dark"] .job-match-field textarea:focus-visible,
+:root[data-theme="dark"] .job-match-resume-upload input[type="file"]:focus-visible {
+  outline-color: var(--accent-hover);
+  box-shadow: var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="dark"] *,
+  :root[data-theme="dark"] *::before,
+  :root[data-theme="dark"] *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

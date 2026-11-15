@@ -33,7 +33,7 @@ test('document and page loading/error states expose core accessible semantics', 
     readSource('src/App.jsx'),
   ]);
 
-  assert.match(html, /<html lang="en">/);
+  assert.match(html, /<html lang="en"(?:\s|>)/);
   assert.match(html, /name="viewport"/);
   assert.match(outlet, /role:\s*'status'/);
   assert.match(outlet, /'aria-live':\s*'polite'/);
@@ -41,6 +41,16 @@ test('document and page loading/error states expose core accessible semantics', 
   assert.match(outlet, /role:\s*'alert'/);
   assert.match(outlet, /'Retry'/);
   assert.match(app, /<main\b/);
+});
+
+test('saved dark theme is bootstrapped before the React module loads', async () => {
+  const html = await readSource('index.html');
+  const themeBootstrap = html.indexOf("localStorage.getItem('careerscout-theme-preference')");
+  const reactModule = html.indexOf('<script type="module"');
+
+  assert.match(html, /<html\b[^>]*data-theme="light"/);
+  assert.notEqual(themeBootstrap, -1);
+  assert.ok(themeBootstrap < reactModule);
 });
 
 test('navigation focus only runs for explicit route or browser history navigation', async () => {

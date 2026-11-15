@@ -8,7 +8,8 @@ import {
   Timestamp,
   updateDoc,
 } from 'firebase/firestore';
-import { auth, firestore } from './firebase.js';
+import { auth } from './firebase.js';
+import { firestore } from './firebaseData.js';
 import {
   APPLICATION_STATUSES,
   EMPLOYMENT_TYPES,

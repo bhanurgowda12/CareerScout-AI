@@ -8,7 +8,8 @@ import {
   orderBy,
   query,
 } from 'firebase/firestore';
-import { auth, firestore } from './firebase.js';
+import { auth } from './firebase.js';
+import { firestore } from './firebaseData.js';
 
 function canUseProfile(user) {
   return Boolean(user?.uid && (
