@@ -3728,3 +3728,5 @@ h2 { margin-bottom: 0; font: 600 31px/1.2 'Manrope', sans-serif; letter-spacing:
 :root[data-theme="light"] .learning-focus-note strong { color: var(--text-primary); }
 :root[data-theme="light"] :is(.skill-list button, .skill-resource:focus) { color: var(--accent-primary); outline-color: var(--accent-primary); }
 :root[data-theme="light"] .skill-list button:hover { background: var(--active-surface); }
+
+.profile-page-nav { margin: -20px 0 22px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }

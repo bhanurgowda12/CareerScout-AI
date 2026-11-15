@@ -2,6 +2,8 @@ export const pageHashes = {
   home: '',
   dashboard: '#student-dashboard',
   profile: '#student-profile',
+  profileEdit: '#student-profile-edit',
+  profileHistory: '#student-profile-history',
   recommendations: '#career-recommendations',
   learning: '#skill-gap-learning',
   jobMatch: '#job-match-analyzer',
