@@ -12,7 +12,8 @@ import {
   setDoc,
   where,
 } from 'firebase/firestore';
-import { auth, firestore } from './firebase.js';
+import { auth } from './firebase.js';
+import { firestore } from './firebaseData.js';
 import {
   DEFAULT_LEARNING_RESOURCES_TIMEOUT_MS,
   getApiBaseUrl,

@@ -3,7 +3,8 @@ import { addDoc, collection, doc, getDoc, serverTimestamp } from 'firebase/fires
 import { useCareerRecommendations } from './ai.js';
 import CareerExplorer from './CareerExplorer.jsx';
 import { getCareerRole } from './careerCatalog.js';
-import { auth, firestore } from './firebase.js';
+import { auth } from './firebase.js';
+import { firestore } from './firebaseData.js';
 
 function canUseProfile(user) {
   return Boolean(user?.uid && (

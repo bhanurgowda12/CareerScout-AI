@@ -1,8 +1,8 @@
 import { gzipSync } from 'node:zlib';
 
 export const BUNDLE_BUDGETS = Object.freeze({
-  initialJsBytes: 1_250_000,
-  initialJsGzipBytes: 330_000,
+  initialJsBytes: 450_000,
+  initialJsGzipBytes: 120_000,
   initialCssBytes: 180_000,
   initialCssGzipBytes: 32_000,
 });

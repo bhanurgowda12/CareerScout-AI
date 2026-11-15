@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { collection, doc, runTransaction, serverTimestamp } from 'firebase/firestore';
-import { auth, firestore } from './firebase.js';
+import { auth } from './firebase.js';
+import { firestore } from './firebaseData.js';
 import {
   buildCareerLearningPlan,
   careerDomains,

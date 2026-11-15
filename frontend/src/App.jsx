@@ -1,8 +1,7 @@
 import React, { lazy, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
 import AuthPanel from './AuthPanel.jsx';
-import { auth, firestore } from './firebase.js';
+import { auth } from './firebase.js';
 import PageContent from './PageContent.js';
 import { getPageFromHash, pageHashes } from './pageRoutes.js';
 import { focusNavigationContent } from './navigationAccessibility.js';
@@ -95,6 +94,10 @@ function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute(
+      'content',
+      theme === 'dark' ? '#050505' : '#f7f7f2',
+    );
     writeThemePreference(theme);
   }, [theme]);
 
@@ -144,14 +147,17 @@ function App() {
     }
 
     setUsernameStatus('checking');
-    if (!firestore || auth?.currentUser?.uid !== uid) {
-      setUsernameStatus('error');
-      return undefined;
-    }
-
-    getDoc(doc(firestore, 'users', uid, 'profile', 'profile'))
+    import('./firebaseData.js')
+      .then(({ doc, firestore, getDoc }) => {
+        if (cancelled || auth?.currentUser?.uid !== uid) return null;
+        if (!firestore) {
+          setUsernameStatus('error');
+          return null;
+        }
+        return getDoc(doc(firestore, 'users', uid, 'profile', 'profile'));
+      })
       .then((snapshot) => {
-        if (cancelled || auth?.currentUser?.uid !== uid) return;
+        if (!snapshot || cancelled || auth?.currentUser?.uid !== uid) return;
         const savedUsername = snapshot.exists() ? snapshot.data().username : '';
         if (isValidUsername(savedUsername)) {
           setStudentUsername(savedUsername.trim());

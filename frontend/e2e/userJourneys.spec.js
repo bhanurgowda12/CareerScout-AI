@@ -236,3 +236,74 @@ test('learning progress is saved to Firestore and restored after reload', async 
     await testEnvironment.cleanup();
   }
 });
+
+test('dark and light themes render every workspace page without responsive overflow', async ({ page }) => {
+  await mockBackend(page);
+  await page.addInitScript(() => localStorage.setItem('careerscout-theme-preference', 'dark'));
+
+  await page.goto('/');
+  await expect(page.getByRole('heading', { level: 1, name: /Your future is/i })).toBeVisible();
+  await expect.poll(() => page.locator('html').getAttribute('data-theme')).toBe('dark');
+  await expect(page.locator('html')).toHaveCSS('background-color', 'rgb(5, 5, 5)');
+  await expect(page.locator('.workflow-steps li > span').first()).toHaveCSS('color', 'rgb(129, 140, 248)');
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  await page.goto('/#sign-in');
+  await expect(page.getByRole('heading', { level: 1, name: 'Welcome back.' })).toBeVisible();
+  await expect.poll(() => page.locator('html').getAttribute('data-theme')).toBe('dark');
+  await page.goto('/#get-started');
+  await expect(page.getByRole('heading', { level: 1, name: 'Create your account.' })).toBeVisible();
+  await expect.poll(() => page.locator('html').getAttribute('data-theme')).toBe('dark');
+
+  const account = await createVerifiedAccount();
+  await signInThroughApp(page, account);
+
+  await page.getByRole('navigation', { name: 'Account' }).getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.locator('.settings-page')).toBeVisible();
+  await page.getByRole('button', { name: 'Dark', exact: true }).click();
+  await expect.poll(() => page.locator('html').getAttribute('data-theme')).toBe('dark');
+  await page.reload();
+  await expect(page.locator('.settings-page')).toBeVisible();
+  await expect.poll(() => page.locator('html').getAttribute('data-theme')).toBe('dark');
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--page-background').trim())).toBe('#050505');
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor)).toBe('rgb(5, 5, 5)');
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(5, 5, 5)');
+  await page.getByRole('button', { name: 'Light', exact: true }).click();
+  await expect.poll(() => page.locator('html').getAttribute('data-theme')).toBe('light');
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--page-background').trim())).toBe('#f7f7f2');
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor)).toBe('rgb(247, 247, 242)');
+  await page.getByRole('button', { name: 'Dark', exact: true }).click();
+  await expect.poll(() => page.locator('html').getAttribute('data-theme')).toBe('dark');
+
+  const routes = [
+    { name: 'Dashboard', selector: '.dashboard-page', section: 'Workspace' },
+    { name: 'Student Profile', selector: '.profile-page', section: 'Career Growth' },
+    { name: 'Career Recommendations', selector: '.recommendations-page', section: 'Career Growth' },
+    { name: 'Skill Gap & Learning Resources', selector: '.skill-gap-page', section: 'Career Growth' },
+    { name: 'Job Discovery', selector: '.job-discovery-page', section: 'Job Search' },
+    { name: 'AI Job Match Analyzer', selector: '.job-match-page', section: 'Job Search' },
+    { name: 'Job Application Tracker', selector: '.job-tracker-page', section: 'Job Search' },
+    { name: 'Resume Builder', selector: '.resume-builder-page', section: 'Job Search' },
+    { name: 'Settings', selector: '.settings-page', section: 'Account' },
+  ];
+
+  for (const route of routes) {
+    await page.getByRole('navigation', { name: route.section }).getByRole('button', { name: route.name, exact: true }).click();
+
+    const pageContent = page.locator(route.selector).first();
+    await expect(pageContent, `${route.name} page`).toBeVisible();
+
+    for (const width of [1440, 768, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), {
+        message: `${route.name} should not overflow at ${width}px`,
+      }).toBe(true);
+      expect(await page.locator('html').getAttribute('data-theme')).toBe('dark');
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+  }
+});

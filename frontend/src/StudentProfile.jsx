@@ -16,7 +16,9 @@ import {
   ref as storageRef,
   uploadBytesResumable,
 } from 'firebase/storage';
-import { auth, firestore, storage } from './firebase.js';
+import { auth } from './firebase.js';
+import { firestore } from './firebaseData.js';
+import { storage } from './firebaseStorage.js';
 import { careerDomains } from './careerCatalog.js';
 import {
   isOwnedAvatarPath,

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { updateProfile } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
-import { auth, firestore } from './firebase.js';
+import { auth } from './firebase.js';
+import { firestore } from './firebaseData.js';
 import { isValidUsername } from './settingsUtils.js';
 
 export { isValidUsername } from './settingsUtils.js';
