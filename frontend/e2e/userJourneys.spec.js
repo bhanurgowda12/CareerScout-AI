@@ -359,6 +359,8 @@ test('dark and light themes render every workspace page without responsive overf
 
     const pageContent = page.locator(route.selector).first();
     await expect(pageContent, `${route.name} page`).toBeVisible();
+    await expect(page.locator('.cursor-effect')).toBeVisible();
+    await expect(page.locator('.cursor-effect')).toHaveCSS('pointer-events', 'none');
 
     for (const width of [1440, 768, 390]) {
       await page.setViewportSize({ width, height: 900 });
