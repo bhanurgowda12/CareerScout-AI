@@ -19,6 +19,7 @@ import {
   createJobPreparationRoadmap,
   compareListingWithProfile,
   createTrackerPrefill,
+  extractJobRequirementEvidence,
   filterAndSortDiscoveryListings,
   formatDiscoveryDate,
   getCategorySearchTerms,
@@ -53,6 +54,56 @@ function descriptionPreview(description) {
   if (typeof description !== 'string') return '';
   const normalized = description.replace(/\s+/g, ' ').trim();
   return normalized.length > 420 ? `${normalized.slice(0, 417).trimEnd()}...` : normalized;
+}
+
+const jobDetailIcons = {
+  employment: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3.5" y="7.5" width="17" height="13" rx="2" />
+      <path d="M8 7.5V5.8a1.8 1.8 0 0 1 1.8-1.8h4.4A1.8 1.8 0 0 1 16 5.8v1.7M3.5 12h17M10 12v1.5h4V12" />
+    </svg>
+  ),
+  workMode: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.8 12h16.4M12 3.5a13 13 0 0 1 0 17M12 3.5a13 13 0 0 0 0 17" />
+    </svg>
+  ),
+  location: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M19 10.2c0 5-7 10.3-7 10.3S5 15.2 5 10.2a7 7 0 1 1 14 0Z" />
+      <circle cx="12" cy="10" r="2.2" />
+    </svg>
+  ),
+  experience: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3.5 14.6 9l6 .9-4.3 4.2 1 5.9-5.3-2.8-5.3 2.8 1-5.9-4.3-4.2 6-.9L12 3.5Z" />
+    </svg>
+  ),
+  salary: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3.5v17M16 7.2c-.8-1-2.1-1.5-4-1.5-2.2 0-3.7 1.1-3.7 2.8 0 4.6 7.4 1.9 7.4 6.4 0 1.7-1.5 3-4 3-1.8 0-3.3-.6-4.2-1.7" />
+    </svg>
+  ),
+  published: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3.5" y="5.5" width="17" height="15" rx="2" />
+      <path d="M7.5 3.5v4M16.5 3.5v4M3.5 10h17" />
+    </svg>
+  ),
+};
+
+function JobDetail({ icon, label, value, note }) {
+  return (
+    <div className="job-discovery-info-item">
+      <span className="job-discovery-info-icon" aria-hidden="true">{jobDetailIcons[icon]}</span>
+      <div className="job-discovery-info-copy">
+        <dt>{label}</dt>
+        <dd className={value ? '' : 'is-unspecified'}>{value || 'Not specified'}</dd>
+        {note && <p>{note}</p>}
+      </div>
+    </div>
+  );
 }
 
 function verifiedUser(user) {
@@ -103,6 +154,7 @@ export function JobDiscovery({
   const [roadmapJob, setRoadmapJob] = useState('');
   const [roadmapWeeks, setRoadmapWeeks] = useState(4);
   const [completedTasks, setCompletedTasks] = useState({});
+  const [expandedDescriptions, setExpandedDescriptions] = useState({});
   const requestGeneration = useRef(0);
   const activeRequest = useRef(null);
   const listingQuery = query.trim();
@@ -387,101 +439,261 @@ export function JobDiscovery({
   }
 
   function renderListing(job) {
-    const publishedDate = formatDiscoveryDate(job.publicationDate);
+    const companyCategory = typeof job.category === 'string' ? job.category.trim() : '';
+    const employmentType = typeof job.employmentType === 'string' ? job.employmentType.trim() : '';
+    const location = typeof job.location === 'string' ? job.location.trim() : '';
+    const salary = typeof job.salary === 'string' ? job.salary.trim() : '';
+    const publishedAt = typeof job.publicationDate === 'string' ? job.publicationDate : '';
+    const publishedDate = formatDiscoveryDate(publishedAt);
+    const sourceDisplayLabel = typeof job.sourceLabel === 'string' && job.sourceLabel.trim()
+      ? job.sourceLabel.trim()
+      : job.source;
     const experienceDetails = getExperienceClassificationDetails(job);
-    const formatExperienceEvidence = (detail, label, value = detail.classification) => {
-      if (detail.source === 'provider') return `${label}: ${value} — reported by source (${detail.evidence}).`;
-      if (detail.source === 'title') return `${label}: ${value} — inferred from title "${detail.evidence}".`;
-      if (detail.source === 'description' || detail.source === 'description-inferred') {
-        return `${label}: ${value} — inferred from description "${detail.evidence}".`;
-      }
-      return `${label}: Unknown / Not stated — ${detail.evidence}`;
-    };
+    const description = typeof job.description === 'string' ? job.description : '';
+    const normalizedDescription = description.replace(/\s+/g, ' ').trim();
     const opportunityTypeLabel = experienceDetails.opportunityType.classification === 'internship'
       ? 'Internship'
       : experienceDetails.opportunityType.classification === 'non-internship'
-        ? job.employmentType || 'Non-internship'
-        : 'Unknown';
+        ? employmentType || 'Non-internship'
+        : 'Not specified';
     const seniorityLabel = ({
       'fresher/graduate': 'Fresher/Graduate',
       'entry-level': 'Entry-level',
       experienced: 'Experienced',
-    })[experienceDetails.seniority.classification] || 'Unknown / Not stated';
+    })[experienceDetails.seniority.classification] || '';
+    const sourceLabel = (detail) => ({
+      provider: 'Reported by source',
+      title: 'Inferred from job title',
+      description: 'Inferred from job description',
+      'description-inferred': 'Inferred from job description',
+    })[detail.source] || '';
     const opportunityTypeBadge = experienceDetails.opportunityType.source === 'unknown'
-      ? 'Opportunity type: Unknown / Not stated'
-      : `Opportunity type: ${opportunityTypeLabel} (${experienceDetails.opportunityType.source === 'provider'
-        ? 'source-reported'
-        : experienceDetails.opportunityType.source === 'title' ? 'title-inferred' : 'description-inferred'})`;
+      ? 'Opportunity type not specified'
+      : `Opportunity type: ${opportunityTypeLabel} · ${sourceLabel(experienceDetails.opportunityType)}`;
     const seniorityBadge = experienceDetails.seniority.source === 'unknown'
-      ? 'Seniority: Unknown / Not stated'
-      : `Seniority: ${seniorityLabel} (${experienceDetails.seniority.source === 'provider'
-        ? 'source-reported'
-        : experienceDetails.seniority.source === 'title' ? 'title-inferred' : 'description-inferred'})`;
+      ? 'Experience level not specified'
+      : `Experience level: ${seniorityLabel} · ${sourceLabel(experienceDetails.seniority)}`;
     const jobKey = String(job.id || job.url);
     const comparison = profileReady ? matchResults.get(jobKey) : null;
     const roadmap = profileReady && roadmapJob === (job.id || job.url)
       ? createJobPreparationRoadmap(job, profile || {}, roadmapWeeks)
       : null;
+    const descriptionExpanded = Boolean(expandedDescriptions[jobKey]);
+    const hasExpandableDescription = normalizedDescription.length > 420;
+    const requirementEvidence = extractJobRequirementEvidence(job);
+    const requiredSkills = [...new Set(requirementEvidence
+      .filter((item) => item.status === 'required')
+      .map((item) => item.skill))];
+    const preferredSkills = [...new Set(requirementEvidence
+      .filter((item) => item.status === 'optional')
+      .map((item) => item.skill))];
+    const providerSkills = Array.isArray(job.skills)
+      ? [...new Set(job.skills
+        .filter((skill) => typeof skill === 'string')
+        .map((skill) => skill.trim())
+        .filter(Boolean))]
+      : [];
+    const matchedSkills = comparison?.matchedSkills || [];
+    const unmatchedRequiredSkills = comparison?.requirements
+      .filter((item) => item.mandatory && item.status === 'unmatched')
+      .map((item) => item.skill) || [];
+    const unknownRequiredSkills = comparison?.requirements
+      .filter((item) => item.mandatory && item.status === 'unknown')
+      .map((item) => item.skill) || [];
+    const workMode = typeof job.workMode === 'string' && job.workMode.trim()
+      ? job.workMode.trim()
+      : job.isRemote === true ? 'Remote' : '';
+    const workModeNote = typeof job.workMode === 'string' && job.workMode.trim()
+      ? 'Reported by source'
+      : job.isRemote === true ? 'Reported as remote by source' : '';
     return (
       <li className="job-discovery-card" key={jobKey}>
         <article>
-          <header>
+          <header className="job-discovery-card-header">
             <div className="job-discovery-card-title">
-              <p>{job.company}</p>
+              <p className="job-discovery-company">{job.company}</p>
               <h3>{job.title}</h3>
+              {companyCategory && <p className="job-discovery-category-tag">{companyCategory}</p>}
             </div>
-            <div className="job-discovery-card-badges">
-              <span className="job-discovery-badge">{job.sourceLabel || job.source || 'Provider source'}</span>
-              <span className={`job-discovery-experience-badge job-discovery-experience-badge--${experienceDetails.opportunityType.source}`}>
-                {opportunityTypeBadge}
-              </span>
-              <span className={`job-discovery-experience-badge job-discovery-experience-badge--${experienceDetails.seniority.source}`}>
-                {seniorityBadge}
-              </span>
-            </div>
+            <button
+              className="job-discovery-save-quick"
+              type="button"
+              aria-label={`Save ${job.title} to the job tracker`}
+              onClick={() => trackListing(job)}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6 4.5h12v16l-6-3.8-6 3.8v-16Z" />
+              </svg>
+              <span>Save</span>
+            </button>
           </header>
-          <dl className="job-discovery-match-summary">
-            <div>
-              <dt>Match score</dt>
-              <dd>
+          <div className="job-discovery-card-badges" role="group" aria-label="Listing classification">
+            <span className="job-discovery-badge">{sourceDisplayLabel}</span>
+            <span
+              className={`job-discovery-experience-badge job-discovery-experience-badge--${experienceDetails.opportunityType.source}`}
+              aria-label={opportunityTypeBadge}
+            >
+              {opportunityTypeBadge}
+            </span>
+            <span
+              className={`job-discovery-experience-badge job-discovery-experience-badge--${experienceDetails.seniority.source}`}
+              aria-label={seniorityBadge}
+            >
+              {seniorityBadge}
+            </span>
+          </div>
+          <section className="job-discovery-card-section" aria-labelledby={`job-discovery-details-${encodeURIComponent(jobKey)}`}>
+            <h4 id={`job-discovery-details-${encodeURIComponent(jobKey)}`}>Job details <span>Source-provided unless marked inferred</span></h4>
+            <dl className="job-discovery-info-grid">
+              <JobDetail icon="employment" label="Employment type" value={employmentType} />
+              <JobDetail
+                icon="workMode"
+                label="Work mode"
+                value={workMode}
+                note={workModeNote}
+              />
+              <JobDetail icon="location" label="Location" value={location} />
+              <JobDetail
+                icon="experience"
+                label="Experience level"
+                value={seniorityLabel}
+                note={sourceLabel(experienceDetails.seniority)}
+              />
+              <JobDetail icon="salary" label="Salary / compensation" value={salary} />
+              <JobDetail
+                icon="published"
+                label="Published"
+                value={publishedDate ? <time dateTime={publishedAt}>{publishedDate}</time> : ''}
+              />
+            </dl>
+          </section>
+          <section className="job-discovery-card-section" aria-labelledby={`job-discovery-about-${encodeURIComponent(jobKey)}`}>
+            <h4 id={`job-discovery-about-${encodeURIComponent(jobKey)}`}>About this role</h4>
+            {description
+              ? <p id={`job-discovery-description-${encodeURIComponent(jobKey)}`} className="job-discovery-description">
+                {descriptionExpanded ? description : descriptionPreview(description)}
+              </p>
+              : <p className="job-discovery-empty-detail">No role description provided by the source.</p>}
+            {hasExpandableDescription && (
+              <button
+                className="job-discovery-read-more"
+                type="button"
+                aria-expanded={descriptionExpanded}
+                aria-controls={`job-discovery-description-${encodeURIComponent(jobKey)}`}
+                onClick={() => setExpandedDescriptions((current) => ({
+                  ...current,
+                  [jobKey]: !current[jobKey],
+                }))}
+              >
+                {descriptionExpanded ? 'Show less' : 'Read more'}
+              </button>
+            )}
+          </section>
+          <section className="job-discovery-card-section" aria-labelledby={`job-discovery-skills-${encodeURIComponent(jobKey)}`}>
+            <h4 id={`job-discovery-skills-${encodeURIComponent(jobKey)}`}>Skills required</h4>
+            {requiredSkills.length > 0 ? (
+              <div className="job-discovery-skill-group">
+                <h5>Explicitly required in the posting</h5>
+                <ul className="job-discovery-skill-chips">{requiredSkills.map((skill) => <li key={skill}>{skill}</li>)}</ul>
+              </div>
+            ) : (
+              <p className="job-discovery-empty-detail">
+                No required skills were explicitly identified by the source.
+              </p>
+            )}
+            {preferredSkills.length > 0 && (
+              <div className="job-discovery-skill-group">
+                <h5>Preferred</h5>
+                <ul className="job-discovery-skill-chips job-discovery-skill-chips--quiet">
+                  {preferredSkills.map((skill) => <li key={skill}>{skill}</li>)}
+                </ul>
+              </div>
+            )}
+            {providerSkills.length > 0 && (
+              <div className="job-discovery-skill-group">
+                <h5>Provider tags <span>Requirement status not specified</span></h5>
+                <ul className="job-discovery-skill-chips job-discovery-skill-chips--quiet">
+                  {providerSkills.map((skill) => <li key={skill}>{skill}</li>)}
+                </ul>
+              </div>
+            )}
+            {!requiredSkills.length && !preferredSkills.length && !providerSkills.length && (
+              <p className="job-discovery-empty-detail">No skills were provided by the source.</p>
+            )}
+          </section>
+          <section className="job-discovery-match-section" aria-label={`Job match for ${job.title}`}>
+            <div className="job-discovery-section-heading">
+              <div>
+                <p className="eyebrow">CareerScout profile match</p>
+                <h4>How this role matches your profile</h4>
+              </div>
+            </div>
+            <dl className="job-discovery-match-summary">
+              <div>
+                <dt>Match score</dt>
+                <dd>
+                  {profileLoading
+                    ? 'Loading profile…'
+                    : profileReady
+                      ? comparison
+                        ? comparison.score === null ? 'Insufficient evidence' : `${comparison.score}%`
+                        : 'Unavailable'
+                      : 'Unavailable — profile not loaded'}
+                </dd>
+              </div>
+              <div>
+                <dt>Evidence coverage</dt>
+                <dd>{profileReady && comparison ? `${comparison.evidenceCoverage}%` : 'Unavailable'}</dd>
+              </div>
+            </dl>
+            {comparison && (
+              <>
+                {comparison.score === null && (
+                  <p className="job-discovery-match-status" role="status">
+                    Insufficient evidence to calculate a match score. Missing information is unknown, not a mismatch.
+                  </p>
+                )}
+                <div className="job-discovery-match-skills">
+                  <div>
+                    <h5>Matching skills</h5>
+                    {matchedSkills.length
+                      ? <ul className="job-discovery-skill-chips">{matchedSkills.map((skill) => <li key={skill}>{skill}</li>)}</ul>
+                      : <p>No matching required skills were found in the saved profile.</p>}
+                  </div>
+                  <div>
+                    <h5>Required skills not documented in your profile</h5>
+                    {unmatchedRequiredSkills.length
+                      ? <ul className="job-discovery-skill-chips job-discovery-skill-chips--quiet">
+                        {unmatchedRequiredSkills.map((skill) => <li key={skill}>{skill}</li>)}
+                      </ul>
+                      : unknownRequiredSkills.length
+                        ? <p>Skill evidence is insufficient to compare: {unknownRequiredSkills.join(', ')}.</p>
+                        : <p>No unmatched required skills were identified.</p>}
+                    {unmatchedRequiredSkills.length > 0 && (
+                      <p>Not documented does not mean you lack these skills.</p>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+            {!comparison && (
+              <p className="job-discovery-match-status" role="status">
                 {profileLoading
-                  ? 'Loading profile…'
-                  : profileReady
-                    ? comparison
-                      ? comparison.score === null ? 'Insufficient evidence' : `${comparison.score}%`
-                      : 'Unavailable'
-                    : 'Unavailable — profile not loaded'}
-              </dd>
-            </div>
-            <div>
-              <dt>Evidence coverage</dt>
-              <dd>{profileReady && comparison ? `${comparison.evidenceCoverage}%` : 'Unavailable'}</dd>
-            </div>
-          </dl>
-          <dl>
-            <div><dt>Location</dt><dd>{job.location || 'Not provided by source'}</dd></div>
-            <div><dt>Work mode</dt><dd>{job.workMode || getKnownWorkMode(job) || 'Unknown — not stated by source'}</dd></div>
-            <div><dt>Opportunity type</dt><dd>{formatExperienceEvidence(experienceDetails.opportunityType, 'Opportunity type', opportunityTypeLabel)}</dd></div>
-            <div><dt>Seniority</dt><dd>{formatExperienceEvidence(experienceDetails.seniority, 'Seniority', seniorityLabel)}</dd></div>
-            <div><dt>Employment</dt><dd>{job.employmentType || 'Unknown — not stated by source'}</dd></div>
-            <div><dt>Salary</dt><dd>{job.salary || 'Not provided by source'}</dd></div>
-            <div><dt>Published</dt><dd>{publishedDate
-              ? <time dateTime={job.publicationDate}>{publishedDate}</time>
-              : 'Not provided by source'}</dd></div>
-          </dl>
-          {descriptionPreview(job.description) && <p className="job-discovery-description">{descriptionPreview(job.description)}</p>}
-          {Array.isArray(job.skills) && job.skills.length > 0 && (
-            <p className="job-discovery-category"><strong>Provider tags:</strong> {job.skills.join(', ')}</p>
-          )}
-          {job.category && <p className="job-discovery-category">{job.category}</p>}
-          <footer>
-            <a className="small-action" href={job.url} target="_blank" rel="noopener noreferrer">View original posting <span aria-hidden="true">↗</span></a>
-            <button className="small-action" type="button" onClick={() => trackListing(job)}>
+                  ? 'Loading your saved profile for a match.'
+                  : 'Profile matching is unavailable until your saved profile is ready.'}
+              </p>
+            )}
+          </section>
+          <footer className="job-discovery-actions">
+            <a className="job-discovery-action job-discovery-action--primary" href={job.url} target="_blank" rel="noopener noreferrer">
+              View original posting <span aria-hidden="true">↗</span>
+            </a>
+            <button className="job-discovery-action" type="button" onClick={() => trackListing(job)}>
               Save job in tracker
             </button>
-            <button className="small-action" type="button" onClick={() => analyzeListing(job)}>Open AI job analyzer</button>
-            <button className="small-action" type="button" disabled={!profileReady} aria-expanded={comparisonJob === jobKey} aria-controls={`job-discovery-compare-${encodeURIComponent(String(jobKey))}`} onClick={() => setComparisonJob(comparisonJob === jobKey ? '' : jobKey)}>Compare with profile</button>
-            <button className="small-action" type="button" disabled={!profileReady} onClick={() => setRoadmapJob(roadmapJob === jobKey ? '' : jobKey)}>Prepare for this job</button>
+            <button className="job-discovery-action" type="button" onClick={() => analyzeListing(job)}>Open AI job analyzer</button>
+            <button className="job-discovery-action" type="button" disabled={!profileReady} aria-expanded={comparisonJob === jobKey} aria-controls={`job-discovery-compare-${encodeURIComponent(jobKey)}`} onClick={() => setComparisonJob(comparisonJob === jobKey ? '' : jobKey)}>Compare with profile</button>
+            <button className="job-discovery-action" type="button" disabled={!profileReady} onClick={() => setRoadmapJob(roadmapJob === jobKey ? '' : jobKey)}>Prepare for this job</button>
           </footer>
           {profileReady && (
             <section

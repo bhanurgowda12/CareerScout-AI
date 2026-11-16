@@ -206,6 +206,134 @@ test('job discovery searches mocked listings and filters to remote results', asy
   expect(submittedSearches[0]).toMatchObject({ query: 'Synthetic', workMode: 'Remote' });
 });
 
+test('job discovery cards present complete and sparse source data accessibly across themes and actions', async ({ page }) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
+  const description = `Required skills: React and Python. TypeScript is preferred. ${'Build useful tools with a collaborative team. '.repeat(12)} END_OF_SYNTHETIC_DESCRIPTION`;
+  const jobs = [
+    {
+      id: 'synthetic-complete',
+      title: 'Synthetic Product Engineer',
+      company: 'Synthetic Labs',
+      url: 'https://remotive.com/remote-jobs/software-dev/synthetic-product-engineer',
+      source: 'Remotive',
+      sourceLabel: 'Remotive job aggregator',
+      category: 'Product Engineering',
+      location: 'Bengaluru',
+      workMode: 'Hybrid',
+      employmentType: 'Full-time',
+      experienceLevel: 'Entry level',
+      experienceMetadata: [{ label: 'Experience Level', value: 'Entry level' }],
+      salary: 'INR 900,000–1,200,000 yearly',
+      publicationDate: '2026-01-15T12:00:00Z',
+      skills: ['React', 'Python', 'TypeScript'],
+      description,
+    },
+    {
+      id: 'synthetic-sparse',
+      title: 'Synthetic Junior Designer',
+      company: 'Sparse Listings Co',
+      url: 'https://remotive.com/remote-jobs/design/synthetic-junior-designer',
+      source: 'Remotive',
+    },
+  ];
+  await mockBackend(page, { jobs });
+  const account = await createVerifiedAccount();
+  const testEnvironment = await createRulesTestEnvironment();
+  try {
+    const seedDb = testEnvironment.authenticatedContext(account.uid, {
+      email_verified: true,
+      firebase: { sign_in_provider: 'password' },
+    }).firestore();
+    await setDoc(doc(seedDb, 'users', account.uid, 'profile', 'profile'), {
+      fullName: 'Synthetic Profile',
+      skills: ['React'],
+      interests: ['Product Engineering'],
+      experienceLevel: 'Beginner',
+      preferredLocations: ['Bengaluru'],
+      preferredWorkModes: ['Hybrid'],
+      preferredEmploymentTypes: ['Full-time'],
+    });
+
+    await signInThroughApp(page, account);
+    await openWorkspacePage(page, 'Job Discovery');
+    await page.getByRole('button', { name: 'Discover Jobs' }).click();
+
+    const completeCard = page.locator('.job-discovery-card').filter({
+      has: page.getByRole('heading', { name: 'Synthetic Product Engineer' }),
+    });
+    const sparseCard = page.locator('.job-discovery-card').filter({
+      has: page.getByRole('heading', { name: 'Synthetic Junior Designer' }),
+    });
+    await expect(completeCard).toBeVisible();
+    await expect(sparseCard).toBeVisible();
+    await expect(completeCard.locator('.job-discovery-category-tag')).toHaveText('Product Engineering');
+    const infoGrid = completeCard.locator('.job-discovery-info-grid');
+    await expect(infoGrid.getByText('Full-time', { exact: true })).toBeVisible();
+    await expect(infoGrid.getByText('Hybrid', { exact: true })).toBeVisible();
+    await expect(infoGrid.getByText('Bengaluru', { exact: true })).toBeVisible();
+    await expect(infoGrid.getByText('INR 900,000–1,200,000 yearly')).toBeVisible();
+    await expect(completeCard.getByRole('heading', { name: 'Explicitly required in the posting' })).toBeVisible();
+    await expect(completeCard.getByRole('heading', { name: 'Preferred', exact: true })).toBeVisible();
+    await expect(sparseCard.getByText('No role description provided by the source.')).toBeVisible();
+    await expect(sparseCard.getByText('No skills were provided by the source.')).toBeVisible();
+    await expect(sparseCard.getByText('Not specified', { exact: true })).toHaveCount(5);
+    await expect(sparseCard.locator('.job-discovery-info-item p')).toContainText('Inferred from job title');
+
+    const readMore = completeCard.getByRole('button', { name: 'Read more' });
+    await expect(readMore).toHaveAttribute('aria-expanded', 'false');
+    await expect(completeCard.getByText('END_OF_SYNTHETIC_DESCRIPTION')).toHaveCount(0);
+    await readMore.click();
+    await expect(completeCard.getByRole('button', { name: 'Show less' })).toHaveAttribute('aria-expanded', 'true');
+    await expect(completeCard.getByText('END_OF_SYNTHETIC_DESCRIPTION')).toBeVisible();
+    await completeCard.getByRole('button', { name: 'Show less' }).click();
+    await expect(completeCard.getByText('END_OF_SYNTHETIC_DESCRIPTION')).toHaveCount(0);
+
+    const profileComparison = completeCard.getByRole('button', { name: 'Compare with profile' });
+    const preparation = completeCard.getByRole('button', { name: 'Prepare for this job' });
+    await expect(profileComparison).toBeEnabled();
+    await expect(preparation).toBeEnabled();
+    await expect(completeCard.getByText('React', { exact: true }).first()).toBeVisible();
+    await expect(completeCard.getByText('Python', { exact: true }).first()).toBeVisible();
+    await profileComparison.click();
+    await expect(completeCard.getByRole('region', { name: 'Profile comparison for Synthetic Product Engineer' })).toBeVisible();
+    await preparation.click();
+    await expect(completeCard.getByRole('heading', { name: '4-week preparation roadmap' })).toBeVisible();
+
+    await expect(completeCard.getByRole('link', { name: /View original posting/ }))
+      .toHaveAttribute('href', jobs[0].url);
+    await expect(completeCard.getByRole('button', { name: 'Save Synthetic Product Engineer to the job tracker' })).toBeVisible();
+
+    const lightCardBackground = await completeCard.evaluate((element) => getComputedStyle(element).backgroundColor);
+    await page.locator('html').evaluate((element) => { element.dataset.theme = 'dark'; });
+    await expect.poll(() => completeCard.evaluate((element) => getComputedStyle(element).backgroundColor))
+      .not.toBe(lightCardBackground);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileDimensions = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      page: document.documentElement.scrollWidth,
+    }));
+    expect(mobileDimensions.page).toBeLessThanOrEqual(mobileDimensions.viewport);
+    await page.setViewportSize({ width: 1280, height: 900 });
+
+    await completeCard.getByRole('button', { name: 'Save job in tracker' }).click();
+    await expect(page.getByRole('heading', { name: 'Job Application Tracker' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Job title' })).toHaveValue('Synthetic Product Engineer');
+    await page.getByRole('button', { name: 'Back to Student Dashboard' }).click();
+    await expect(page.getByRole('heading', { name: 'Discover Your Next Opportunity' })).toBeVisible();
+    await page.getByRole('button', { name: 'Discover Jobs' }).click();
+    const refreshedCard = page.locator('.job-discovery-card').filter({
+      has: page.getByRole('heading', { name: 'Synthetic Product Engineer' }),
+    });
+    await refreshedCard.getByRole('button', { name: 'Open AI job analyzer' }).click();
+    await expect(page.getByRole('heading', { name: /AI Job Match/ })).toBeVisible();
+    await expect(page.getByLabel('Job description')).toHaveValue(description);
+    expect(pageErrors).toEqual([]);
+  } finally {
+    await testEnvironment.cleanup();
+  }
+});
+
 test('application tracker saves and updates application status across reloads', async ({ page }) => {
   await mockBackend(page);
   const account = await createVerifiedAccount();
