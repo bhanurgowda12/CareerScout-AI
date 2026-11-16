@@ -1,6 +1,7 @@
 import React, { lazy, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import AuthPanel from './AuthPanel.jsx';
+import CursorEffect from './CursorEffect.jsx';
 import { auth } from './firebase.js';
 import PageContent from './PageContent.js';
 import { getPageFromHash, pageHashes } from './pageRoutes.js';
@@ -379,6 +380,7 @@ function App() {
 
   return (
     <main ref={pageFocusRootRef} className={isAuthenticatedAppView ? 'app-shell-root' : 'site-root'}>
+      <CursorEffect />
       {isAuthenticatedAppView ? (
         <>
           <aside className={`app-sidebar${mobileNavOpen ? ' app-sidebar--open' : ''}${sidebarCollapsed ? ' app-sidebar--collapsed' : ''}`}>

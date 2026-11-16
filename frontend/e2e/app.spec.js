@@ -22,9 +22,78 @@ test('application loads and exposes labeled main navigation', async ({ page }) =
   await expect(navigation.getByRole('link', { name: 'Features' })).toBeVisible();
 });
 
+test('cursor trail follows mouse input without blocking controls and respects motion and touch settings', async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  await mockBackend(page);
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+  const cursorEffect = page.locator('.cursor-effect');
+  await expect(cursorEffect).toBeVisible();
+  await expect(cursorEffect).toHaveAttribute('aria-hidden', 'true');
+  await expect(cursorEffect).toHaveCSS('pointer-events', 'none');
+
+  async function getTrailColor(x, y) {
+    return cursorEffect.evaluate((canvas, point) => {
+      const context = canvas.getContext('2d');
+      const scaleX = canvas.width / canvas.clientWidth;
+      const scaleY = canvas.height / canvas.clientHeight;
+      const pixels = context.getImageData(
+        Math.max(0, Math.round((point.x - 24) * scaleX)),
+        Math.max(0, Math.round((point.y - 24) * scaleY)),
+        Math.round(48 * scaleX),
+        Math.round(48 * scaleY),
+      ).data;
+      for (let index = 0; index < pixels.length; index += 4) {
+        if (pixels[index + 3] > 24) return [pixels[index], pixels[index + 1], pixels[index + 2]];
+      }
+      return null;
+    }, { x, y });
+  }
+
+  async function waitForTrailColor(x, y) {
+    let color = null;
+    await expect.poll(async () => {
+      color = await getTrailColor(x, y);
+      return color;
+    }).not.toBeNull();
+    return color;
+  }
+
+  await page.mouse.move(420, 300);
+  const lightTrailColor = await waitForTrailColor(420, 300);
+
+  await page.locator('html').evaluate((element) => { element.dataset.theme = 'dark'; });
+  await page.mouse.move(500, 300, { steps: 5 });
+  const darkTrailColor = await waitForTrailColor(500, 300);
+  expect(darkTrailColor).not.toEqual(lightTrailColor);
+
+  await page.getByRole('button', { name: 'Sign In', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Email address' }).fill('cursor-test@example.test');
+  await page.getByLabel('Password').fill('CursorTestPass9');
+
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(cursorEffect).toBeHidden();
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await expect(cursorEffect).toBeVisible();
+
+  const touchContext = await browser.newContext({
+    isMobile: true,
+    hasTouch: true,
+    viewport: { width: 390, height: 844 },
+  });
+  const touchPage = await touchContext.newPage();
+  await mockBackend(touchPage);
+  await touchPage.goto(baseURL, { waitUntil: 'domcontentloaded' });
+  await expect(touchPage.locator('.cursor-effect')).toBeHidden();
+  await touchContext.close();
+});
+
 test('sign-in interface renders without contacting Firebase services', async ({ page }) => {
   await mockBackend(page);
-  await page.goto('/');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: 'Sign In' }).click();
 
   await expect(page.getByRole('heading', { level: 1, name: 'Welcome back.' })).toBeVisible();
