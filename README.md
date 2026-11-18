@@ -7,6 +7,8 @@ CareerScout AI is a React and FastAPI application for student career planning, j
 [![Firebase](https://img.shields.io/badge/Firebase-Authentication%20%7C%20Firestore-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
+**Documentation:** [Getting started](#10-prerequisites) · [Architecture](#4-system-architecture) · [Testing](#15-testing-and-validation) · [Contributing](CONTRIBUTING.md) · [License](LICENSE)
+
 ## Table of Contents
 
 - [1. Project Overview](#1-project-overview)
@@ -606,72 +608,122 @@ flowchart TD
 
 ```text
 CareerScout-AI/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
 ├── backend/
 │   ├── main.py
+│   ├── provider_controls.py
+│   ├── rate_limiting.py
 │   ├── requirements.txt
 │   ├── test_auth.py
-│   └── test_job_discovery.py
+│   ├── test_job_discovery.py
+│   ├── test_payload_limits.py
+│   ├── test_provider_controls.py
+│   └── test_rate_limiting.py
 ├── frontend/
 │   ├── .env.example
+│   ├── .env.emulator.example
 │   ├── index.html
 │   ├── package-lock.json
 │   ├── package.json
+│   ├── playwright.config.js
+│   ├── vite.config.js
 │   ├── src/
-│       ├── App.jsx
-│       ├── AuthPanel.jsx
-│       ├── CareerExplorer.jsx
-│       ├── CareerRecommendations.jsx
-│       ├── JobApplicationTracker.jsx
-│       ├── JobDiscovery.jsx
-│       ├── JobMatchAnalyzer.jsx
-│       ├── ResumeBuilder.jsx
-│       ├── SettingsPage.jsx
-│       ├── SkillGapLearning.jsx
-│       ├── StudentDashboard.jsx
-│       ├── StudentProfile.jsx
-│       ├── UsernameSetup.jsx
-│       ├── ai.js
-│       ├── careerCatalog.js
-│       ├── firebase.js
-│       ├── jobApplicationUtils.js
-│       ├── jobDiscoveryUtils.js
-│       ├── jobDiscoveryUtils.test.js
-│       ├── jobMatchAi.js
-│       ├── jobMatchUtils.js
-│       ├── learningResourcesApi.js
-│       ├── main.jsx
-│       ├── resourceCatalog.js
-│       ├── resumeEducation.js
-│       ├── settingsUtils.js
-│       ├── studentProfileUtils.js
-│       ├── studentProfileUtils.test.js
-│       └── style.css
-│   └── tests/
-│       ├── careerCatalog.test.js
-│       ├── jobApplicationUtils.test.js
-│       ├── jobMatchAi.test.js
-│       ├── jobMatchUtils.test.js
-│       ├── learningResourcesApi.test.js
-│       ├── resumeEducation.test.js
-│       └── settingsUtils.test.js
+│   │   ├── App.jsx
+│   │   ├── AuthPanel.jsx
+│   │   ├── CareerExplorer.jsx
+│   │   ├── CareerRecommendations.jsx
+│   │   ├── JobApplicationTracker.jsx
+│   │   ├── JobDiscovery.jsx
+│   │   ├── JobMatchAnalyzer.jsx
+│   │   ├── ResumeBuilder.jsx
+│   │   ├── SettingsPage.jsx
+│   │   ├── SkillGapLearning.jsx
+│   │   ├── StudentDashboard.jsx
+│   │   ├── StudentProfile.jsx
+│   │   ├── UsernameSetup.jsx
+│   │   ├── CursorEffect.jsx
+│   │   ├── PageContent.js
+│   │   ├── apiRequest.js
+│   │   ├── ai.js
+│   │   ├── careerCatalog.js
+│   │   ├── environmentConfig.js
+│   │   ├── firebase.js
+│   │   ├── firebaseData.js
+│   │   ├── firebaseStorage.js
+│   │   ├── jobApplicationUtils.js
+│   │   ├── jobDiscoveryUtils.js
+│   │   ├── jobDiscoveryUtils.test.js
+│   │   ├── jobMatchAi.js
+│   │   ├── jobMatchUtils.js
+│   │   ├── learningResourcesApi.js
+│   │   ├── main.jsx
+│   │   ├── navigationAccessibility.js
+│   │   ├── pageRoutes.js
+│   │   ├── resumeDocxWorker.js
+│   │   ├── resourceCatalog.js
+│   │   ├── resumeEducation.js
+│   │   ├── resumeFileParser.js
+│   │   ├── settingsUtils.js
+│   │   ├── skillGapUtils.js
+│   │   ├── studentProfileUtils.js
+│   │   ├── studentProfileUtils.test.js
+│   │   └── style.css
+│   ├── tests/
+│   │   ├── apiRequest.test.js
+│   │   ├── bundleSize.test.js
+│   │   ├── careerCatalog.test.js
+│   │   ├── environmentConfig.test.js
+│   │   ├── frontendQuality.test.js
+│   │   ├── jobApplicationUtils.test.js
+│   │   ├── jobMatchAi.test.js
+│   │   ├── jobMatchUtils.test.js
+│   │   ├── learningResourcesApi.test.js
+│   │   ├── navigationAccessibility.test.js
+│   │   ├── pageContent.test.js
+│   │   ├── pageRoutes.test.js
+│   │   ├── resumeEducation.test.js
+│   │   ├── resumeFileParser.test.js
+│   │   ├── settingsUtils.test.js
+│   │   └── skillGapUtils.test.js
+│   ├── e2e/
+│   │   ├── accessibility.spec.js
+│   │   ├── app.spec.js
+│   │   ├── support.js
+│   │   ├── userJourneys.spec.js
+│   │   └── fixtures/
+│   │       ├── lazy-page.html
+│   │       └── lazy-page.jsx
+│   ├── emulator-tests/
+│   │   └── firebaseEmulator.integration.js
+│   └── scripts/
+│       ├── bundleSize.mjs
+│       └── check-bundle-size.mjs
 ├── shared/
 │   └── experienceClassificationCases.json
 ├── .gitignore
 ├── firebase.json
 ├── firestore.rules
 ├── README.md
+├── CONTRIBUTING.md
+├── LICENSE
 └── storage.rules
 ```
 
 | File or directory | Responsibility |
 | --- | --- |
-| `frontend/src/` | React views, Firebase client setup, career/job utilities, and frontend tests. |
-| `frontend/tests/` | Frontend tests for career catalogue, tracker utilities, job matching, learning requests, resume education, and settings. |
+| `frontend/src/` | React views, Firebase client setup, career/job utilities, and focused utility tests. |
+| `frontend/tests/` | Frontend unit and quality tests. |
+| `frontend/e2e/` | Playwright browser and accessibility tests. |
+| `frontend/emulator-tests/` | Firebase Auth, Firestore, and Storage emulator integration tests. |
+| `frontend/scripts/` | Build and bundle-size checks. |
 | `frontend/src/App.jsx` | Authentication gating and application navigation. |
 | `frontend/src/ai.js`, `jobMatchAi.js` | Firebase AI Logic and Gemini workflows. |
 | `frontend/src/careerCatalog.js`, `jobDiscoveryUtils.js` | Career data, role matching, job filtering, and classification. |
-| `backend/main.py` | FastAPI endpoints, Firebase token verification, provider adapters, and YouTube proxy. |
-| `backend/test_*.py` | Backend authentication, job-provider, and API tests. |
+| `backend/main.py` | FastAPI routes, Firebase token verification, provider adapters, and YouTube proxy. |
+| `backend/provider_controls.py`, `rate_limiting.py` | Provider concurrency and rate-limiting support. |
+| `backend/test_*.py` | Backend authentication, provider, payload-limit, and API tests. |
 | `firestore.rules`, `storage.rules` | Firebase database and file-access rules. |
 | `shared/experienceClassificationCases.json` | Shared experience-classification test cases. |
 
@@ -692,7 +744,7 @@ CareerScout-AI/
 ### 11.1 Clone Repository
 
 ```powershell
-git clone https://github.com/bhanurgowda12/CareerScout-AI.git
+git clone https://github.com/dileepvgowda18/CareerScout-AI.git
 Set-Location .\CareerScout-AI
 ```
 
@@ -1052,43 +1104,30 @@ Screenshots are not currently included in the repository. Add reviewed captures 
 
 ## 20. Contribution Guidelines
 
-1. Fork the repository.
-2. Clone your fork:
+Contributions are welcome. Follow the [detailed contribution guide](CONTRIBUTING.md) for setup, coding and testing expectations, and the pull request process. The short workflow is:
 
-   ```powershell
-   git clone https://github.com/<your-account>/CareerScout-AI.git
-   Set-Location .\CareerScout-AI
-   ```
-
-3. Create a feature branch:
-
-   ```powershell
-   git switch -c feature/short-description
-   ```
-
-4. Make a focused change and add or update relevant tests/documentation.
-5. Run frontend tests/build and backend tests as applicable.
-6. Review changes and check for secrets:
+1. Fork the repository, clone your fork, and create a focused branch such as `feature/short-description`.
+2. Make a focused change and add or update relevant tests/documentation.
+3. Run applicable frontend and backend checks from [Testing and Validation](#15-testing-and-validation).
+4. Review the diff and check for whitespace or accidentally included secrets:
 
    ```powershell
    git diff --check
    git status --short
    ```
 
-7. Commit and push your branch:
+5. Commit and push your branch, then open a pull request with a concise summary and validation results:
 
    ```powershell
-   git add -A
+   git add path\to\changed-file
    git commit -m "Describe the change"
    git push -u origin feature/short-description
    ```
 
-8. Open a pull request with a concise summary and validation results.
-
-Do not include real user data, API keys, service-account files, or App Check debug tokens.
+Never include real user data, API keys, service-account files, or App Check debug tokens.
 
 ## 21. License and Acknowledgements
 
-No `LICENSE` file is present in the repository. The project license has not been specified; add a license before relying on reuse or redistribution permissions.
+CareerScout AI is licensed under the [MIT License](LICENSE).
 
 The project integrates Firebase, Gemini through Firebase AI Logic, Remotive, Jobicy, optional Greenhouse/Lever/Ashby job boards, and YouTube Data API v3. Their services and content remain subject to their own terms and availability.
