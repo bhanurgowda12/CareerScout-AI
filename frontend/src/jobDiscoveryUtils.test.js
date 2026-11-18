@@ -13,6 +13,7 @@ import {
   filterAndSortDiscoveryListings,
   filterDiscoveryListings,
   formatDiscoveryDate,
+  getListingRegionLabel,
   getExperienceClassificationDetails,
   getCategorySearchTerms,
   getExperienceClassification,
@@ -80,6 +81,44 @@ test('rejects incomplete listings and non-Remotive links', () => {
   assert.deepEqual(filterDiscoveryListings([null, {}, { ...listing, url: 'javascript:alert(1)' }]), []);
 });
 
+test('validates JobsForce India listing and optional application URLs against its HTTPS hosts', () => {
+  const jobsForceListing = {
+    ...listing,
+    source: 'JobsForce India',
+    url: 'https://jobsforceindia.com/jobs/123',
+    applyUrl: 'https://www.jobsforceindia.com/apply/123',
+  };
+  assert.equal(isValidDiscoveryListing(jobsForceListing), true);
+  assert.equal(isValidDiscoveryListing({
+    ...jobsForceListing,
+    url: 'https://jobsforceindia.com.attacker.example/jobs/123',
+  }), false);
+  assert.equal(isValidDiscoveryListing({
+    ...jobsForceListing,
+    applyUrl: 'http://jobsforceindia.com/apply/123',
+  }), false);
+  assert.equal(isValidDiscoveryListing({
+    ...jobsForceListing,
+    applyUrl: 'https://attacker.example/apply/123',
+  }), false);
+});
+
+test('distinguishes confirmed India listings from explicitly global remote listings', () => {
+  assert.equal(getListingRegionLabel({ ...listing, region: 'India' }), 'India location confirmed');
+  assert.equal(getListingRegionLabel({
+    ...listing,
+    source: 'Jobicy',
+    location: 'Worldwide',
+    isRemote: true,
+  }), 'Global remote listing');
+  assert.equal(getListingRegionLabel({
+    ...listing,
+    source: 'Jobicy',
+    location: 'Remote',
+    isRemote: true,
+  }), '');
+});
+
 test('creates encoded external job-board searches with title and location', () => {
   const links = createExternalJobSearchLinks('C++ & React', 'Bengaluru, India');
   const byName = Object.fromEntries(links.map((link) => [link.name, new URL(link.url)]));
@@ -109,6 +148,12 @@ test('prefills exactly the tracker fields without changing the Saved status', ()
   assert.equal(createTrackerPrefill({ ...listing, description: 'd'.repeat(2000) }).description.length, 1500);
   assert.equal(createTrackerPrefill({ ...listing, employmentType: 'Temporary' }).employmentType, '');
   assert.equal(createTrackerPrefill({ ...listing, title: '' }), null);
+  assert.equal(createTrackerPrefill({
+    ...listing,
+    source: 'JobsForce India',
+    url: 'https://jobsforceindia.com/jobs/123',
+    applyUrl: 'https://jobsforceindia.com/apply/123',
+  }).jobUrl, 'https://jobsforceindia.com/jobs/123');
 });
 
 test('formats available publication dates and omits invalid dates', () => {
@@ -163,6 +208,25 @@ test('treats all-job role labels and empty/default filters as unrestricted', () 
     experience: '',
     employment: '',
   }), [listing]);
+});
+
+test('matches explicit roles across listing evidence and restores all listings when cleared', () => {
+  const roleListings = [
+    { ...listing, id: 'role-title', url: 'https://remotive.com/jobs/role-title', title: 'Software Engineer', description: '' },
+    { ...listing, id: 'role-description', url: 'https://remotive.com/jobs/role-description', title: 'Data Analyst', description: 'Work with the Software Developer team.' },
+    { ...listing, id: 'role-category', url: 'https://remotive.com/jobs/role-category', title: 'Operations Analyst', category: 'Application Developer' },
+    { ...listing, id: 'role-skill', url: 'https://remotive.com/jobs/role-skill', title: 'QA Analyst', category: 'Quality', skills: ['Software Developer'] },
+    { ...listing, id: 'unrelated-role', url: 'https://remotive.com/jobs/unrelated-role', title: 'Retail Manager', description: 'Manage a retail store.' },
+  ];
+
+  assert.deepEqual(
+    filterAndSortDiscoveryListings(roleListings, { role: 'Software Engineer' }).map((job) => job.id),
+    ['role-title', 'role-description', 'role-category', 'role-skill'],
+  );
+  assert.deepEqual(
+    filterAndSortDiscoveryListings(roleListings, { role: '' }).map((job) => job.id),
+    roleListings.map((job) => job.id),
+  );
 });
 
 test('matches selected skills against listing evidence and avoids partial technology-name matches', () => {
@@ -562,20 +626,31 @@ test('keeps unknown work-mode and employment metadata visible without treating i
   }).map((job) => job.id), ['unknown', 'onsite']);
 });
 
-test('filters city matches honestly and keeps global/unspecified remote listings separate', () => {
+test('filters city matches honestly and preserves explicitly India-eligible remote listings', () => {
   const cityListing = { ...listing, location: 'Bengaluru, India', isRemote: false };
   const globalRemote = { ...listing, id: 'global', url: 'https://remotive.com/jobs/global', location: 'Worldwide', isRemote: true };
   const unspecifiedRemote = { ...listing, id: 'remote-unknown', url: 'https://remotive.com/jobs/remote-unknown', location: '', isRemote: true };
+  const indiaEligibleRemote = {
+    ...listing,
+    id: 'remote-india',
+    url: 'https://remotive.com/jobs/remote-india',
+    location: 'India',
+    locationMatch: 'remote-india',
+    isRemote: true,
+  };
   const otherCity = { ...listing, id: 'other', url: 'https://remotive.com/jobs/other', location: 'United States', isRemote: true };
   const unknownLocation = { ...listing, id: 'unknown', url: 'https://remotive.com/jobs/unknown', location: '', isRemote: null };
   assert.equal(getLocationMatch(cityListing, 'Bengaluru'), 'local');
   assert.equal(getLocationMatch(globalRemote, 'Bengaluru'), 'remote-global');
   assert.equal(getLocationMatch(unspecifiedRemote, 'Bengaluru'), 'remote-unspecified');
+  assert.equal(getLocationMatch(indiaEligibleRemote, 'Bengaluru'), '');
   assert.equal(getLocationMatch(otherCity, 'Bengaluru'), '');
   assert.equal(getLocationMatch(unknownLocation, 'Bengaluru'), '');
   assert.deepEqual(filterAndSortDiscoveryListings([
-    cityListing, globalRemote, unspecifiedRemote, otherCity, unknownLocation,
-  ], { location: 'Bengaluru' }).map((job) => job.id), ['123', 'global', 'remote-unknown']);
+    cityListing, globalRemote, unspecifiedRemote, indiaEligibleRemote, otherCity, unknownLocation,
+  ], { location: 'Bengaluru' }).map((job) => job.id), [
+    '123', 'global', 'remote-unknown', 'remote-india',
+  ]);
 });
 
 test('preserves skill provenance and scores only explicit mandatory description requirements', () => {

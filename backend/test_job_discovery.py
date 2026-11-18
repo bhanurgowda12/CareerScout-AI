@@ -23,6 +23,9 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
     def setUp(self):
         main._job_cache.update(jobs=None, fetched_at=None, expires_at=0.0)
         main._jobicy_cache.clear()
+        main._jobicy_stale_cache.clear()
+        main._jobsforce_india_cache.clear()
+        main._jobsforce_india_stale_cache.clear()
         main._company_board_cache.clear()
         self.client = TestClient(main.app)
 
@@ -604,6 +607,823 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
         job.update(overrides)
         return job
 
+    def jobsforce_listing(self, **overrides):
+        job = {
+            "id": 123,
+            "title": "Product Engineer",
+            "hiring": {
+                "type": "direct",
+                "name": "Example India",
+                "employer": "Example India",
+                "display": "Example India",
+            },
+            "location": {
+                "city": "Bengaluru",
+                "state": "Karnataka",
+                "country": "India",
+                "remote": False,
+            },
+            "work_mode": "Hybrid",
+            "job_type": "Full-time",
+            "category": "Product Engineering",
+            "salary": {"label": "INR 900,000 yearly"},
+            "experience": {"label": "2-4 years"},
+            "summary": "<p>Build reliable products.</p>",
+            "posted_date": "2026-10-24",
+            "url": "https://jobsforceindia.com/jobs/123",
+            "apply_url": "https://jobsforceindia.com/apply/123",
+        }
+        job.update(overrides)
+        return job
+
+    def test_normalizes_jobsforce_fields_and_never_exposes_agency_client_names(self):
+        listing = self.jobsforce_listing(hiring={
+            "type": "agency",
+            "name": "Confidential Client Name",
+            "employer": "Secret Employer Ltd",
+            "display": "Confidential",
+        })
+
+        normalized = main._normalize_jobsforce_india_job(listing)
+
+        self.assertEqual(normalized["source"], "JobsForce India")
+        self.assertEqual(normalized["company"], "JobsForce India (recruiting for a confidential client)")
+        self.assertNotIn("Confidential Client Name", repr(normalized))
+        self.assertNotIn("Secret Employer Ltd", repr(normalized))
+        self.assertEqual(normalized["location"], "Bengaluru, Karnataka, India")
+        self.assertEqual(normalized["workMode"], "Hybrid")
+        self.assertFalse(normalized["isRemote"])
+        self.assertEqual(normalized["employmentType"], "Full-time")
+        self.assertEqual(normalized["salary"], "INR 900,000 yearly")
+        self.assertEqual(normalized["experienceLevel"], "2-4 years")
+        self.assertEqual(normalized["description"], "Build reliable products.")
+        self.assertEqual(normalized["url"], listing["url"])
+        self.assertEqual(normalized["applyUrl"], listing["apply_url"])
+        self.assertEqual(normalized["region"], "India")
+
+    def test_jobsforce_sparse_results_are_normalized_without_inventing_fields(self):
+        normalized = main._normalize_jobsforce_india_job({
+            "id": 124,
+            "title": "Analyst",
+            "hiring": {"type": "direct"},
+            "location": {"city": "Pune"},
+            "url": "https://jobsforceindia.com/jobs/124",
+        })
+
+        self.assertEqual(normalized["company"], "Employer not specified")
+        self.assertEqual(normalized["location"], "Pune")
+        self.assertEqual(normalized["description"], "")
+        self.assertEqual(normalized["employmentType"], "")
+        self.assertEqual(normalized["salary"], "")
+        self.assertEqual(normalized["experienceLevel"], "")
+        self.assertNotIn("region", normalized)
+        self.assertNotIn("applyUrl", normalized)
+        self.assertIsNone(normalized["isRemote"])
+
+    def test_jobsforce_rejects_unapproved_listing_urls_and_omits_invalid_apply_urls(self):
+        invalid_listing = self.jobsforce_listing(url="https://jobsforceindia.com.attacker.example/jobs/1")
+        invalid_apply = self.jobsforce_listing(apply_url="http://jobsforceindia.com/apply/1")
+
+        self.assertIsNone(main._normalize_jobsforce_india_job(invalid_listing))
+        normalized = main._normalize_jobsforce_india_job(invalid_apply)
+        self.assertNotIn("applyUrl", normalized)
+
+    def test_jobsforce_city_and_page_queries_are_cached_separately_and_follow_pagination(self):
+        calls = []
+
+        def paginated_response(request, timeout):
+            params = parse_qs(urlparse(request.full_url).query)
+            calls.append(params)
+            page = int(params["page"][0])
+            return self.response({
+                "page": page,
+                "per_page": 20,
+                "has_more": page < 3,
+                "next_page": page + 1 if page < 3 else None,
+                "results": [
+                    self.jobsforce_listing(id=page, url=f"https://jobsforceindia.com/jobs/{page}"),
+                    self.jobsforce_listing(id=page + 100, url=f"https://jobsforceindia.com/jobs/{page}"),
+                ],
+            })
+
+        with patch.object(main, "urlopen", side_effect=paginated_response):
+            first, _, first_cached, warnings, pagination = main._get_jobsforce_india_jobs("Bengaluru", 1)
+            cached_first, _, cached, _, _ = main._get_jobsforce_india_jobs("BENGALURU", 1)
+            second, _, second_cached, _, second_pagination = main._get_jobsforce_india_jobs("Bengaluru", 2)
+            other_city, _, _, _, _ = main._get_jobsforce_india_jobs("Pune", 1)
+
+        self.assertFalse(first_cached)
+        self.assertTrue(cached)
+        self.assertFalse(second_cached)
+        self.assertEqual(len(first), 1)
+        self.assertEqual(warnings, [])
+        self.assertEqual(first[0]["id"], "jobsforce-india:1")
+        self.assertEqual(cached_first, first)
+        self.assertEqual(second[0]["id"], "jobsforce-india:2")
+        self.assertEqual(other_city[0]["id"], "jobsforce-india:1")
+        self.assertEqual(pagination, {"hasMore": True, "nextPage": 2})
+        self.assertEqual(second_pagination, {"hasMore": True, "nextPage": 3})
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0], {"page": ["1"], "per_page": ["20"], "city": ["Bengaluru"]})
+        self.assertEqual(calls[1]["page"], ["2"])
+        self.assertEqual(calls[2]["city"], ["Pune"])
+
+    def test_jobsforce_api_pagination_has_a_single_bounded_page_and_validates_next_page(self):
+        with patch.object(main, "urlopen", return_value=self.response({
+            "page": 1,
+            "per_page": 20,
+            "has_more": True,
+            "next_page": "21",
+            "results": [self.jobsforce_listing()],
+        })) as fetch:
+            jobs, _, _, warnings, pagination = main._get_jobsforce_india_jobs()
+
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(pagination, {"hasMore": True, "nextPage": 21})
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(fetch.call_args_list), 1)
+        self.assertEqual(
+            parse_qs(urlparse(fetch.call_args.args[0].full_url).query),
+            {"page": ["1"], "per_page": ["20"]},
+        )
+
+        with patch.object(main, "urlopen", return_value=self.response({
+            "has_more": True,
+            "next_page": 1,
+            "results": [],
+        })):
+            _, _, _, invalid_warnings, invalid_pagination = main._get_jobsforce_india_jobs(page=2)
+        self.assertTrue(invalid_warnings)
+        self.assertEqual(invalid_pagination, {"hasMore": False, "nextPage": None})
+
+        self.assertRaises(ValueError, main._get_jobsforce_india_jobs, "", 0)
+        self.assertRaises(ValueError, main._get_jobsforce_india_jobs, "", main.JOBSFORCE_INDIA_MAX_PAGE + 1)
+
+    def test_india_discovery_with_empty_filters_returns_one_complete_provider_page(self):
+        listings = [
+            self.jobsforce_listing(
+                id=index,
+                title=f"India Listing {index}",
+                url=f"https://jobsforceindia.com/jobs/empty-filter-{index}",
+            )
+            for index in range(1, main.JOBSFORCE_INDIA_PAGE_SIZE + 1)
+        ]
+        with patch.object(main, "_get_remotive_jobs", return_value=([], "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                with patch.object(
+                    main,
+                    "urlopen",
+                    return_value=self.response({
+                        "results": listings,
+                        "has_more": True,
+                        "next_page": 2,
+                    }),
+                ) as fetch:
+                    response = self.client.post(
+                        "/api/job-discovery",
+                        json={"region": "India"},
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(len(result["jobs"]), main.JOBSFORCE_INDIA_PAGE_SIZE)
+        self.assertEqual(
+            result["providerPagination"]["JobsForce India"],
+            {"hasMore": True, "nextPage": 2},
+        )
+        self.assertEqual(fetch.call_count, 1)
+
+    def test_india_small_limit_resumes_within_page_for_filtered_and_unfiltered_searches(self):
+        listings = [
+            main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=index,
+                title=f"Data Analyst {index}",
+                url=f"https://jobsforceindia.com/jobs/small-limit-{index}",
+            ))
+            for index in (1201, 1202)
+        ]
+
+        with patch.object(main, "_get_company_board_configs", return_value=[]):
+            with patch.object(main, "_get_remotive_jobs", return_value=([], "stamp", True)):
+                with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                    with patch.object(
+                        main,
+                        "_get_jobsforce_india_jobs",
+                        return_value=(
+                            listings,
+                            "stamp",
+                            False,
+                            [],
+                            {"hasMore": True, "nextPage": 2},
+                        ),
+                    ):
+                        for filters in (
+                            {"region": "India"},
+                            {"region": "India", "roleTerms": ["Data Analyst"]},
+                        ):
+                            first_response = self.client.post(
+                                "/api/job-discovery",
+                                json={**filters, "limit": 1},
+                            )
+                            first_result = first_response.json()
+                            self.assertEqual(first_response.status_code, 200)
+                            self.assertEqual(
+                                [job["id"] for job in first_result["jobs"]],
+                                ["jobsforce-india:1201"],
+                            )
+                            self.assertEqual(
+                                first_result["providerPagination"]["JobsForce India"],
+                                {
+                                    "hasMore": True,
+                                    "nextPage": 1,
+                                    "nextOffset": 1,
+                                },
+                            )
+
+                            next_response = self.client.post(
+                                "/api/job-discovery",
+                                json={
+                                    **filters,
+                                    "limit": 1,
+                                    "jobsForcePage": 1,
+                                    "jobsForceOffset": 1,
+                                },
+                            )
+                            self.assertEqual(next_response.status_code, 200)
+                            self.assertEqual(
+                                [job["id"] for job in next_response.json()["jobs"]],
+                                ["jobsforce-india:1202"],
+                            )
+                            self.assertEqual(
+                                next_response.json()["providerPagination"]["JobsForce India"],
+                                {"hasMore": True, "nextPage": 2},
+                            )
+
+    def test_provider_caches_prune_expired_entries_and_keep_bounded_stale_fallback(self):
+        fresh_time = datetime.now(timezone.utc).isoformat()
+        expired_monotonic = time.monotonic() - 1
+        too_old_time = (
+            datetime.now(timezone.utc) - timedelta(hours=2)
+        ).isoformat()
+        expired_entry = {
+            "jobs": [main._normalize_jobsforce_india_job(self.jobsforce_listing())],
+            "fetched_at": fresh_time,
+            "expires_at": expired_monotonic,
+            "warnings": [],
+            "pagination": {"hasMore": False, "nextPage": None},
+        }
+
+        with patch.object(main, "JOB_DISCOVERY_STALE_CACHE_MAX_AGE_SECONDS", 60):
+            main._jobicy_cache["expired"] = {
+                **expired_entry,
+                "jobs": [main._normalize_jobicy_job(self.jobicy_listing())],
+            }
+            main._jobicy_cache["too-old"] = {
+                **main._jobicy_cache["expired"],
+                "fetched_at": too_old_time,
+            }
+            main._prune_provider_cache(
+                main._jobicy_cache,
+                main._jobicy_stale_cache,
+                time.monotonic(),
+                main.JOBICY_CACHE_MAX_ENTRIES,
+            )
+            self.assertNotIn("expired", main._jobicy_cache)
+            self.assertIn("expired", main._jobicy_stale_cache)
+            self.assertNotIn("too-old", main._jobicy_stale_cache)
+
+            main._jobsforce_india_cache[("bengaluru", 1)] = expired_entry
+            main._jobsforce_india_cache[("pune", 1)] = {
+                **expired_entry,
+                "fetched_at": too_old_time,
+            }
+            main._prune_provider_cache(
+                main._jobsforce_india_cache,
+                main._jobsforce_india_stale_cache,
+                time.monotonic(),
+                main.JOBSFORCE_INDIA_CACHE_MAX_ENTRIES,
+            )
+            self.assertNotIn(("bengaluru", 1), main._jobsforce_india_cache)
+            self.assertIn(("bengaluru", 1), main._jobsforce_india_stale_cache)
+            self.assertNotIn(("pune", 1), main._jobsforce_india_stale_cache)
+
+            expired_entries = {
+                "old": dict(expired_entry),
+                "new": dict(expired_entry),
+            }
+            bounded_stale_cache = {}
+            main._prune_provider_cache(
+                expired_entries,
+                bounded_stale_cache,
+                time.monotonic(),
+                1,
+            )
+            self.assertEqual(list(bounded_stale_cache), ["new"])
+
+    def test_jobicy_and_jobsforce_caches_evict_oldest_entries(self):
+        now = time.monotonic()
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        for key in ("old", "newer"):
+            main._jobicy_cache[key] = {
+                "jobs": [],
+                "fetched_at": fetched_at,
+                "expires_at": now + 60,
+                "warnings": [],
+            }
+        for city in ("old-city", "newer-city"):
+            main._jobsforce_india_cache[(city, 1)] = {
+                "jobs": [],
+                "fetched_at": fetched_at,
+                "expires_at": now + 60,
+                "warnings": [],
+                "pagination": {"hasMore": False, "nextPage": None},
+            }
+
+        def provider_payload(_url, provider_name, _max_bytes):
+            if provider_name == "Jobicy":
+                return {"jobs": [self.jobicy_listing(id=1301)]}
+            return {
+                "results": [self.jobsforce_listing(id=1302)],
+                "has_more": False,
+                "next_page": None,
+            }
+
+        with (
+            patch.object(main, "JOBICY_CACHE_MAX_ENTRIES", 2),
+            patch.object(main, "JOBSFORCE_INDIA_CACHE_MAX_ENTRIES", 2),
+            patch.object(main, "_provider_json", side_effect=provider_payload),
+        ):
+            main._get_jobicy_jobs("new")
+            main._get_jobsforce_india_jobs("new-city", 1)
+
+        self.assertEqual(list(main._jobicy_cache), ["newer", "new"])
+        self.assertEqual(
+            list(main._jobsforce_india_cache),
+            [("newer-city", 1), ("new-city", 1)],
+        )
+
+    def test_india_discovery_fills_restrictive_filters_from_later_pages_and_resumes_cursor(self):
+        first_match = main._normalize_jobsforce_india_job(self.jobsforce_listing(
+            id=901,
+            title="Data Analyst",
+            location={"city": "Bengaluru", "state": "Karnataka", "country": "India", "remote": False},
+            experience={"label": "Entry-level"},
+            job_type="Full-time",
+            url="https://jobsforceindia.com/jobs/matching-901",
+        ))
+        nonmatching_page_one = [
+            main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=index,
+                title=f"Software Engineer {index}",
+                location={"city": "Pune", "state": "Maharashtra", "country": "India", "remote": False},
+                experience={"label": "Senior"},
+                job_type="Part-time",
+                url=f"https://jobsforceindia.com/jobs/nonmatching-{index}",
+            ))
+            for index in range(902, 921)
+        ]
+        matching_page_two = [
+            main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=index,
+                title=f"Data Analyst {index}",
+                location={"city": "Bengaluru", "state": "Karnataka", "country": "India", "remote": False},
+                experience={"label": "Entry-level"},
+                job_type="Full-time",
+                url=f"https://jobsforceindia.com/jobs/matching-{index}",
+            ))
+            for index in range(921, 940)
+        ]
+        page_results = {
+            1: ([first_match, *nonmatching_page_one], {"hasMore": True, "nextPage": 2}),
+            2: ([first_match, *matching_page_two], {"hasMore": True, "nextPage": 3}),
+            3: ([main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=940,
+                title="Data Analyst 940",
+                location={"city": "Bengaluru", "state": "Karnataka", "country": "India", "remote": False},
+                experience={"label": "Entry-level"},
+                job_type="Full-time",
+                url="https://jobsforceindia.com/jobs/matching-940",
+            ))], {"hasMore": False, "nextPage": None}),
+        }
+        calls = []
+
+        def fetch_jobsforce(city, page):
+            calls.append((city, page))
+            jobs, pagination = page_results[page]
+            return jobs, f"page-{page}", False, [], pagination
+
+        filters = {
+            "region": "India",
+            "location": "Bengaluru",
+            "roleTerms": ["Data Analyst"],
+            "employmentType": "Full-time",
+            "experience": "Entry-level jobs",
+        }
+        with patch.object(main, "_get_company_board_configs", return_value=[]):
+            with patch.object(main, "_get_remotive_jobs", return_value=([], "stamp", True)):
+                with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                    with patch.object(main, "_get_jobsforce_india_jobs", side_effect=fetch_jobsforce):
+                        first_response = self.client.post("/api/job-discovery", json=filters)
+                        next_response = self.client.post(
+                            "/api/job-discovery",
+                            json={**filters, "jobsForcePage": 3},
+                        )
+
+        self.assertEqual(first_response.status_code, 200)
+        first_result = first_response.json()
+        self.assertEqual(len(first_result["jobs"]), main.JOBSFORCE_INDIA_MAX_RESULTS_PER_SEARCH)
+        self.assertEqual(
+            first_result["providerPagination"]["JobsForce India"],
+            {"hasMore": True, "nextPage": 3},
+        )
+        self.assertTrue(all(
+            job["title"].startswith("Data Analyst")
+            and job["location"].startswith("Bengaluru")
+            and job["employmentType"] == "Full-time"
+            and job["experienceSeniority"] == "entry-level"
+            for job in first_result["jobs"]
+        ))
+        self.assertEqual(next_response.status_code, 200)
+        self.assertEqual([job["id"] for job in next_response.json()["jobs"]], ["jobsforce-india:940"])
+        self.assertEqual(
+            next_response.json()["providerPagination"]["JobsForce India"],
+            {"hasMore": False, "nextPage": None},
+        )
+        self.assertEqual(calls, [("Bengaluru", 1), ("Bengaluru", 2), ("Bengaluru", 3)])
+
+    def test_india_filtered_pagination_stops_at_page_cap_and_returns_next_cursor(self):
+        calls = []
+
+        def fetch_jobsforce(city, page):
+            calls.append((city, page))
+            job = main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=1000 + page,
+                title="Unrelated Listing",
+                url=f"https://jobsforceindia.com/jobs/capped-{page}",
+            ))
+            return (
+                [job],
+                f"page-{page}",
+                False,
+                [],
+                {"hasMore": True, "nextPage": page + 1},
+            )
+
+        with patch.object(main, "_get_company_board_configs", return_value=[]):
+            with patch.object(main, "_get_remotive_jobs", return_value=([], "stamp", True)):
+                with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                    with patch.object(main, "_get_jobsforce_india_jobs", side_effect=fetch_jobsforce):
+                        response = self.client.post("/api/job-discovery", json={
+                            "region": "India",
+                            "roleTerms": ["Data Analyst"],
+                        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["jobs"], [])
+        self.assertEqual(
+            response.json()["providerPagination"]["JobsForce India"],
+            {"hasMore": True, "nextPage": main.JOBSFORCE_INDIA_MAX_PAGES_PER_SEARCH + 1},
+        )
+        self.assertEqual(
+            calls,
+            [("", page) for page in range(1, main.JOBSFORCE_INDIA_MAX_PAGES_PER_SEARCH + 1)],
+        )
+
+    def test_jobsforce_provider_failure_is_reported_without_hiding_other_sources(self):
+        remotive = main._normalize_remotive_job(self.listing())
+        with patch.object(main, "_get_remotive_jobs", return_value=([remotive], "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                with patch.object(main, "_get_jobsforce_india_jobs", side_effect=ValueError("JobsForce India is temporarily unavailable.")):
+                    response = self.client.post("/api/job-discovery", json={"region": "India"})
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertEqual(result["jobs"], [])
+        status = next(item for item in result["providerStatus"] if item["name"] == "JobsForce India")
+        self.assertEqual(status["status"], "error")
+        self.assertTrue(any("JobsForce India" in message for message in result["providerErrors"]))
+
+    def test_jobsforce_stale_cache_is_scoped_to_city_and_page_and_keeps_pagination(self):
+        stale_job = main._normalize_jobsforce_india_job(self.jobsforce_listing())
+        main._jobsforce_india_cache[("bengaluru", 2)] = {
+            "jobs": [stale_job],
+            "fetched_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+            "expires_at": 0.0,
+            "warnings": [],
+            "pagination": {"hasMore": True, "nextPage": 3},
+        }
+        with patch.object(main, "_get_remotive_jobs", return_value=([], "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                with patch.object(main, "_get_jobsforce_india_jobs", side_effect=ValueError("JobsForce India is temporarily unavailable.")):
+                    response = self.client.post("/api/job-discovery", json={
+                        "region": "India",
+                        "location": "Bengaluru",
+                        "jobsForcePage": 2,
+                    })
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()
+        self.assertTrue(result["cached"])
+        self.assertEqual([job["source"] for job in result["jobs"]], ["JobsForce India"])
+        self.assertEqual(result["providerPagination"]["JobsForce India"], {
+            "hasMore": True,
+            "nextPage": 3,
+        })
+        self.assertTrue(any("Serving previously cached listings." in message for message in result["providerErrors"]))
+
+    def test_post_search_region_dispatch_preserves_legacy_and_worldwide_behavior(self):
+        remotive = main._normalize_remotive_job(self.listing())
+        with patch.object(main, "_get_remotive_jobs", return_value=([remotive], "stamp", True)):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                with patch.object(main, "_get_jobsforce_india_jobs", return_value=([], "stamp", True, [], {"hasMore": False, "nextPage": None})) as fetch:
+                    legacy = self.client.post("/api/job-discovery", json={})
+                    worldwide = self.client.post("/api/job-discovery", json={"region": "Worldwide"})
+                    india = self.client.post("/api/job-discovery", json={
+                        "region": "India",
+                        "location": "Bengaluru",
+                        "jobsForcePage": 2,
+                    })
+
+        self.assertEqual(legacy.status_code, 200)
+        self.assertNotIn("JobsForce India", legacy.json()["sources"])
+        self.assertNotIn("JobsForce India", worldwide.json()["sources"])
+        self.assertEqual(fetch.call_args.args, ("Bengaluru", 2))
+        self.assertEqual(india.json()["providerPagination"]["JobsForce India"], {
+            "hasMore": False,
+            "nextPage": None,
+        })
+        self.assertEqual(
+            self.client.post("/api/job-discovery", json={"region": "Global"}).status_code,
+            422,
+        )
+        self.assertEqual(
+            self.client.post("/api/job-discovery", json={"jobsForcePage": 0}).status_code,
+            422,
+        )
+        self.assertEqual(
+            [job["title"] for job in legacy.json()["jobs"]],
+            ["Python Engineer"],
+        )
+        self.assertEqual(
+            [job["title"] for job in worldwide.json()["jobs"]],
+            ["Python Engineer"],
+        )
+        self.assertEqual(india.json()["jobs"], [])
+
+    def test_india_region_keeps_confirmed_india_and_jobsforce_sparse_results_only(self):
+        listings = [
+            main._normalize_remotive_job(self.listing(
+                id=701,
+                title="Foreign Remote Engineer",
+                candidate_required_location="USA",
+                description="<p>Applicants in India may learn about our product.</p>",
+                url="https://remotive.com/jobs/foreign-remote-701",
+            )),
+            main._normalize_jobicy_job(self.jobicy_listing(
+                id=702,
+                jobTitle="Foreign Data Analyst",
+                jobGeo="Canada",
+                url="https://jobicy.com/jobs/foreign-data-analyst",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=703,
+                title="Worldwide Remote Engineer",
+                candidate_required_location="Worldwide",
+                url="https://remotive.com/jobs/worldwide-703",
+            )),
+            main._normalize_jobicy_job(self.jobicy_listing(
+                id=704,
+                jobTitle="Anywhere Remote Analyst",
+                jobGeo="Anywhere",
+                url="https://jobicy.com/jobs/anywhere-analyst",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=705,
+                title="Unspecified Remote Engineer",
+                candidate_required_location="",
+                url="https://remotive.com/jobs/unspecified-705",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=706,
+                title="India-Eligible Remote Engineer",
+                candidate_required_location="India",
+                url="https://remotive.com/jobs/india-eligible-706",
+            )),
+            main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=707,
+                title="Sparse India Listing",
+                location={},
+                work_mode="",
+                salary={},
+                experience={},
+                url="https://jobsforceindia.com/jobs/sparse-707",
+                apply_url=None,
+            )),
+            main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=708,
+                title="Explicitly Foreign JobsForce Listing",
+                location={
+                    "city": "London",
+                    "country": "United Kingdom",
+                    "remote": False,
+                },
+                url="https://jobsforceindia.com/jobs/foreign-708",
+            )),
+            main._normalize_jobicy_job(self.jobicy_listing(
+                id=709,
+                jobTitle="India-Eligible Jobicy Analyst",
+                jobGeo="India",
+                url="https://jobicy.com/jobs/india-eligible-analyst",
+            )),
+        ]
+
+        result = self.post_discovery_with_provider_jobs(listings, {"region": "India"})
+
+        self.assertEqual(
+            {job["title"] for job in result["jobs"]},
+            {
+                "India-Eligible Remote Engineer",
+                "India-Eligible Jobicy Analyst",
+                "Sparse India Listing",
+            },
+        )
+        self.assertNotIn("Foreign Remote Engineer", {job["title"] for job in result["jobs"]})
+        self.assertNotIn("Worldwide Remote Engineer", {job["title"] for job in result["jobs"]})
+        self.assertNotIn("Anywhere Remote Analyst", {job["title"] for job in result["jobs"]})
+        self.assertNotIn("Unspecified Remote Engineer", {job["title"] for job in result["jobs"]})
+        self.assertNotIn("Explicitly Foreign JobsForce Listing", {job["title"] for job in result["jobs"]})
+
+    def test_india_city_search_excludes_global_and_unspecified_remotes(self):
+        listings = [
+            main._normalize_remotive_job(self.listing(
+                id=711,
+                title="Bengaluru Listing",
+                candidate_required_location="Bengaluru, India",
+                url="https://remotive.com/jobs/bengaluru-711",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=712,
+                title="India-Eligible Remote Listing",
+                candidate_required_location="India",
+                url="https://remotive.com/jobs/india-remote-712",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=713,
+                title="Worldwide Remote Listing",
+                candidate_required_location="Worldwide",
+                url="https://remotive.com/jobs/worldwide-713",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=714,
+                title="Unspecified Remote Listing",
+                candidate_required_location="",
+                url="https://remotive.com/jobs/unspecified-714",
+            )),
+            main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=715,
+                title="JobsForce Bengaluru Listing",
+                url="https://jobsforceindia.com/jobs/bengaluru-715",
+            )),
+        ]
+
+        result = self.post_discovery_with_provider_jobs(
+            listings,
+            {"region": "India", "location": "Bengaluru"},
+        )
+
+        self.assertEqual(
+            {job["title"] for job in result["jobs"]},
+            {
+                "Bengaluru Listing",
+                "India-Eligible Remote Listing",
+                "JobsForce Bengaluru Listing",
+            },
+        )
+        self.assertNotIn("Worldwide Remote Listing", {job["title"] for job in result["jobs"]})
+        self.assertNotIn("Unspecified Remote Listing", {job["title"] for job in result["jobs"]})
+        india_remote = next(
+            job for job in result["jobs"]
+            if job["title"] == "India-Eligible Remote Listing"
+        )
+        self.assertEqual(india_remote["locationMatch"], "remote-india")
+
+    def test_india_city_experience_and_employment_filters_work_together(self):
+        listings = [
+            main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=716,
+                title="Senior Software Engineer",
+                location={"city": "Bengaluru", "state": "Karnataka", "country": "India", "remote": False},
+                experience={"label": "Senior"},
+                job_type="Full-time",
+                url="https://jobsforceindia.com/jobs/senior-bengaluru-716",
+            )),
+            main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=717,
+                title="Junior Software Engineer",
+                location={"city": "Bengaluru", "state": "Karnataka", "country": "India", "remote": False},
+                experience={"label": "Entry-level"},
+                job_type="Full-time",
+                url="https://jobsforceindia.com/jobs/junior-bengaluru-717",
+            )),
+            main._normalize_jobsforce_india_job(self.jobsforce_listing(
+                id=718,
+                title="Senior Data Analyst",
+                location={"city": "Mumbai", "state": "Maharashtra", "country": "India", "remote": False},
+                experience={"label": "Senior"},
+                job_type="Full-time",
+                url="https://jobsforceindia.com/jobs/senior-mumbai-718",
+            )),
+        ]
+
+        result = self.post_discovery_with_provider_jobs(listings, {
+            "region": "India",
+            "location": "Bengaluru",
+            "experience": "Experienced jobs",
+            "employmentType": "Full-time",
+        })
+
+        self.assertEqual([job["title"] for job in result["jobs"]], ["Senior Software Engineer"])
+
+    def test_cached_provider_results_are_filtered_for_india_region(self):
+        listings = [
+            main._normalize_remotive_job(self.listing(
+                id=721,
+                title="Cached Foreign Listing",
+                candidate_required_location="USA",
+                url="https://remotive.com/jobs/cached-foreign-721",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=722,
+                title="Cached India Listing",
+                candidate_required_location="India",
+                url="https://remotive.com/jobs/cached-india-722",
+            )),
+        ]
+
+        result = self.post_discovery_with_provider_jobs(listings, {"region": "India"})
+
+        self.assertTrue(result["cached"])
+        self.assertEqual([job["title"] for job in result["jobs"]], ["Cached India Listing"])
+
+    def test_stale_provider_fallback_results_are_filtered_for_india_region(self):
+        stale_listings = [
+            main._normalize_remotive_job(self.listing(
+                id=731,
+                title="Stale Foreign Listing",
+                candidate_required_location="USA",
+                url="https://remotive.com/jobs/stale-foreign-731",
+            )),
+            main._normalize_remotive_job(self.listing(
+                id=732,
+                title="Stale India Listing",
+                candidate_required_location="India",
+                url="https://remotive.com/jobs/stale-india-732",
+            )),
+        ]
+        main._job_cache.update(
+            jobs=stale_listings,
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            expires_at=0.0,
+        )
+
+        with patch.object(main, "_get_remotive_jobs", side_effect=ValueError("provider unavailable")):
+            with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                with patch.object(
+                    main,
+                    "_get_jobsforce_india_jobs",
+                    return_value=([], "stamp", True, [], {"hasMore": False, "nextPage": None}),
+                ):
+                    response = self.client.post("/api/job-discovery", json={"region": "India"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["cached"])
+        self.assertEqual(
+            [job["title"] for job in response.json()["jobs"]],
+            ["Stale India Listing"],
+        )
+
+    def post_discovery_with_provider_jobs(self, listings, payload):
+        remotive = [job for job in listings if job["source"] == "Remotive"]
+        jobicy = [job for job in listings if job["source"] == "Jobicy"]
+        jobsforce = [job for job in listings if job["source"] == "JobsForce India"]
+        with patch.object(main, "_get_company_board_configs", return_value=[]):
+            with patch.object(main, "_get_remotive_jobs", return_value=(remotive, "stamp", True)):
+                with patch.object(main, "_get_jobicy_jobs", return_value=(jobicy, "stamp", True, [])):
+                    with patch.object(
+                        main,
+                        "_get_jobsforce_india_jobs",
+                        return_value=(
+                            jobsforce,
+                            "stamp",
+                            True,
+                            [],
+                            {"hasMore": False, "nextPage": None},
+                        ),
+                    ):
+                        response = self.client.post("/api/job-discovery", json=payload)
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
     def test_normalizes_jobicy_public_listing_fields_and_missing_metadata(self):
         normalized = main._normalize_jobicy_job(self.jobicy_listing())
         self.assertEqual(normalized["source"], "Jobicy")
@@ -803,6 +1623,99 @@ class RemotiveJobDiscoveryTests(unittest.TestCase):
         self.assertEqual([job["title"] for job in role_response.json()["jobs"]], ["Python Developer"])
         self.assertEqual([job["title"] for job in category_response.json()["jobs"]], ["Java Developer"])
         self.assertEqual([job["title"] for job in skill_response.json()["jobs"]], ["Java Developer"])
+
+    def test_india_default_browses_all_categories_and_role_filters_are_not_cached(self):
+        jobsforce_results = [
+            self.jobsforce_listing(
+                id=8011,
+                title="Software Engineer",
+                category="Software Development",
+                url="https://jobsforceindia.com/jobs/software-engineer-8011",
+            ),
+            self.jobsforce_listing(
+                id=8012,
+                title="Healthcare Coordinator",
+                category="Healthcare",
+                summary="<p>Coordinate patient services.</p>",
+                url="https://jobsforceindia.com/jobs/healthcare-coordinator-8012",
+            ),
+            self.jobsforce_listing(
+                id=8013,
+                title="Operations Analyst",
+                category="Business Operations",
+                summary="<p>Support the Software Developer team.</p>",
+                url="https://jobsforceindia.com/jobs/operations-analyst-8013",
+            ),
+            self.jobsforce_listing(
+                id=8014,
+                title="Retail Manager",
+                category="Retail",
+                summary="<p>Manage store operations.</p>",
+                url="https://jobsforceindia.com/jobs/retail-manager-8014",
+            ),
+        ]
+        provider_response = self.response({
+            "results": jobsforce_results,
+            "has_more": True,
+            "next_page": 2,
+        })
+        role_terms = ["Software Engineer", "Software Developer", "Application Developer"]
+
+        with patch.object(main, "_get_company_board_configs", return_value=[]):
+            with patch.object(main, "_get_remotive_jobs", return_value=([], "stamp", True)):
+                with patch.object(main, "_get_jobicy_jobs", return_value=([], "stamp", True, [])):
+                    with patch.object(main, "urlopen", return_value=provider_response) as fetch:
+                        role_response = self.client.post("/api/job-discovery", json={
+                            "limit": 500,
+                            "mode": "jobs",
+                            "region": "India",
+                            "jobsForcePage": 1,
+                            "roleTerms": role_terms,
+                        })
+                        all_categories_response = self.client.post("/api/job-discovery", json={
+                            "limit": 500,
+                            "mode": "jobs",
+                            "region": "India",
+                            "jobsForcePage": 1,
+                        })
+
+        self.assertEqual(role_response.status_code, 200)
+        role_result = role_response.json()
+        self.assertEqual(
+            {job["title"] for job in role_result["jobs"]},
+            {"Software Engineer", "Operations Analyst"},
+        )
+        self.assertEqual(
+            next(item for item in role_result["providerStatus"] if item["name"] == "JobsForce India")["matchedCount"],
+            2,
+        )
+
+        self.assertEqual(all_categories_response.status_code, 200)
+        all_categories_result = all_categories_response.json()
+        self.assertTrue(all_categories_result["cached"])
+        self.assertEqual(all_categories_result["totalRetrieved"], 4)
+        self.assertEqual(
+            {job["category"] for job in all_categories_result["jobs"]},
+            {"Software Development", "Healthcare", "Business Operations", "Retail"},
+        )
+        self.assertEqual(fetch.call_count, 2)
+
+    def test_role_terms_match_title_description_category_and_skills(self):
+        role_terms = ["Software Engineer", "Software Developer", "Application Developer"]
+        listings = [
+            {"title": "Software Engineer", "description": "", "category": "", "skills": []},
+            {"title": "Data Analyst", "description": "Work with the Software Developer team.", "category": "", "skills": []},
+            {"title": "Operations Analyst", "description": "", "category": "Application Developer", "skills": []},
+            {"title": "QA Analyst", "description": "", "category": "", "skills": ["Software Developer"]},
+        ]
+
+        self.assertTrue(all(main._matches_any_role_term(listing, role_terms) for listing in listings))
+        self.assertFalse(main._matches_any_role_term({
+            "title": "Retail Manager",
+            "description": "Manage a retail store.",
+            "category": "Retail",
+            "skills": [],
+        }, role_terms))
 
     def test_internship_and_fresher_filters_classify_titles_and_keep_unknown_records_uncertain(self):
         listings = [

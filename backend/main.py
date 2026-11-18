@@ -209,13 +209,26 @@ JOB_DISCOVERY_MAX_RESULTS = 500
 JOB_DISCOVERY_MAX_CATEGORY_TERMS = 400
 JOBICY_API_URL = "https://jobicy.com/api/jobs"
 JOBICY_CACHE_SECONDS = 60 * 60
+JOBICY_CACHE_MAX_ENTRIES = 128
 JOBICY_PAGE_SIZE = 200
 JOBICY_MAX_PAGES = 2
 JOBICY_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+JOBSFORCE_INDIA_API_URL = "https://jobsforceindia.com/api/public/v1/jobs"
+JOBSFORCE_INDIA_CACHE_SECONDS = 60 * 60
+JOBSFORCE_INDIA_CACHE_MAX_ENTRIES = 512
+JOBSFORCE_INDIA_PAGE_SIZE = 20
+JOBSFORCE_INDIA_MAX_PAGE = 10000
+JOBSFORCE_INDIA_MAX_PAGES_PER_SEARCH = 3
+JOBSFORCE_INDIA_MAX_RESULTS_PER_SEARCH = 20
+JOBSFORCE_INDIA_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _job_cache = {"jobs": None, "fetched_at": None, "expires_at": 0.0}
 _job_cache_lock = threading.Lock()
 _jobicy_cache = {}
+_jobicy_stale_cache = {}
 _jobicy_cache_lock = threading.Lock()
+_jobsforce_india_cache = {}
+_jobsforce_india_stale_cache = {}
+_jobsforce_india_cache_lock = threading.Lock()
 COMPANY_BOARD_CACHE_SECONDS = 15 * 60
 COMPANY_BOARD_MAX_RESULTS = 500
 COMPANY_BOARD_TIMEOUT_SECONDS = 5
@@ -248,6 +261,36 @@ def _cache_entry_within_max_age(fetched_at):
     return age_seconds <= JOB_DISCOVERY_STALE_CACHE_MAX_AGE_SECONDS
 
 
+def _store_bounded_cache_entry(cache, key, entry, max_entries):
+    cache.pop(key, None)
+    cache[key] = entry
+    while len(cache) > max_entries:
+        cache.pop(next(iter(cache)))
+
+
+def _prune_provider_cache(cache, stale_cache, now, max_entries):
+    for key, entry in tuple(cache.items()):
+        if now < entry.get("expires_at", 0.0):
+            continue
+        cache.pop(key, None)
+        if _cache_entry_within_max_age(entry.get("fetched_at")):
+            _store_bounded_cache_entry(
+                stale_cache,
+                key,
+                entry,
+                max_entries,
+            )
+
+    for key, entry in tuple(stale_cache.items()):
+        if not _cache_entry_within_max_age(entry.get("fetched_at")):
+            stale_cache.pop(key, None)
+
+    while len(cache) > max_entries:
+        cache.pop(next(iter(cache)))
+    while len(stale_cache) > max_entries:
+        stale_cache.pop(next(iter(stale_cache)))
+
+
 def _stale_provider_cache(provider_name, keyword="", config=None):
     if provider_name == "Remotive":
         if not _job_cache_lock.acquire(blocking=False):
@@ -261,10 +304,37 @@ def _stale_provider_cache(provider_name, keyword="", config=None):
         if not _jobicy_cache_lock.acquire(blocking=False):
             return None
         try:
-            cached = _jobicy_cache.get(cache_key)
+            _prune_provider_cache(
+                _jobicy_cache,
+                _jobicy_stale_cache,
+                time.monotonic(),
+                JOBICY_CACHE_MAX_ENTRIES,
+            )
+            cached = _jobicy_cache.get(cache_key) or _jobicy_stale_cache.get(cache_key)
             cached = dict(cached) if cached else None
         finally:
             _jobicy_cache_lock.release()
+    elif provider_name == "JobsForce India" and config:
+        cache_key = (
+            (config.get("city") or "").strip().casefold(),
+            config.get("page", 1),
+        )
+        if not _jobsforce_india_cache_lock.acquire(blocking=False):
+            return None
+        try:
+            _prune_provider_cache(
+                _jobsforce_india_cache,
+                _jobsforce_india_stale_cache,
+                time.monotonic(),
+                JOBSFORCE_INDIA_CACHE_MAX_ENTRIES,
+            )
+            cached = (
+                _jobsforce_india_cache.get(cache_key)
+                or _jobsforce_india_stale_cache.get(cache_key)
+            )
+            cached = dict(cached) if cached else None
+        finally:
+            _jobsforce_india_cache_lock.release()
     elif provider_name in {"Greenhouse", "Lever", "Ashby"} and config:
         provider = provider_name.casefold()
         board = config.get("boards", {}).get(provider)
@@ -292,7 +362,7 @@ def _stale_provider_cache(provider_name, keyword="", config=None):
         or not _cache_entry_within_max_age(cached.get("fetched_at"))
     ):
         return None
-    return cached["jobs"], cached["fetched_at"]
+    return cached["jobs"], cached["fetched_at"], cached.get("pagination")
 
 
 class JobDiscoverySearchRequest(BaseModel):
@@ -305,6 +375,19 @@ class JobDiscoverySearchRequest(BaseModel):
     work_mode: str | None = Field(default=None, alias="workMode", max_length=30)
     employment_type: str | None = Field(default=None, alias="employmentType", max_length=50)
     experience: str | None = Field(default=None, max_length=50)
+    region: str | None = Field(default=None, pattern="^(India|Worldwide)$")
+    jobs_force_page: int = Field(
+        default=1,
+        alias="jobsForcePage",
+        ge=1,
+        le=JOBSFORCE_INDIA_MAX_PAGE,
+    )
+    jobs_force_offset: int = Field(
+        default=0,
+        alias="jobsForceOffset",
+        ge=0,
+        lt=JOBSFORCE_INDIA_PAGE_SIZE,
+    )
     mode: str = Field(default="jobs", pattern="^(jobs|company)$")
     remote_only: bool = Field(default=False, alias="remoteOnly")
     limit: int = Field(default=100, ge=1, le=JOB_DISCOVERY_MAX_RESULTS)
@@ -615,15 +698,18 @@ def _normalize_jobicy_job(item):
 def _get_jobicy_jobs(keyword=""):
     normalized_keyword = keyword.strip().casefold() if isinstance(keyword, str) else ""
     cache_key = normalized_keyword
-    now = time.monotonic()
-    cached_result = _jobicy_cache.get(cache_key)
-    if cached_result and now < cached_result["expires_at"]:
-        return cached_result["jobs"], cached_result["fetched_at"], True, cached_result["warnings"]
-
     with _jobicy_cache_lock:
         now = time.monotonic()
+        _prune_provider_cache(
+            _jobicy_cache,
+            _jobicy_stale_cache,
+            now,
+            JOBICY_CACHE_MAX_ENTRIES,
+        )
         cached_result = _jobicy_cache.get(cache_key)
         if cached_result and now < cached_result["expires_at"]:
+            _jobicy_cache.pop(cache_key)
+            _jobicy_cache[cache_key] = cached_result
             return cached_result["jobs"], cached_result["fetched_at"], True, cached_result["warnings"]
 
         jobs = []
@@ -678,13 +764,219 @@ def _get_jobicy_jobs(keyword=""):
             raise ValueError(warnings[0])
         jobs = _deduplicate_provider_jobs(jobs)
         fetched_at = datetime.now(timezone.utc).isoformat()
-        _jobicy_cache[cache_key] = {
+        cache_entry = {
             "jobs": jobs,
             "fetched_at": fetched_at,
             "expires_at": time.monotonic() + JOBICY_CACHE_SECONDS,
             "warnings": warnings,
         }
+        _jobicy_stale_cache.pop(cache_key, None)
+        _store_bounded_cache_entry(
+            _jobicy_cache,
+            cache_key,
+            cache_entry,
+            JOBICY_CACHE_MAX_ENTRIES,
+        )
         return jobs, fetched_at, False, warnings
+
+
+def _jobsforce_india_https_url(value):
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    try:
+        parsed_url = urlparse(value.strip())
+        host = (parsed_url.hostname or "").lower()
+        port = parsed_url.port
+    except ValueError:
+        return ""
+    if (
+        parsed_url.scheme != "https"
+        or host not in {"jobsforceindia.com", "www.jobsforceindia.com"}
+        or parsed_url.username
+        or parsed_url.password
+        or (port is not None and port != 443)
+    ):
+        return ""
+    return value.strip()[:2048]
+
+
+def _normalize_jobsforce_india_job(item):
+    if not isinstance(item, dict):
+        return None
+
+    title = item.get("title")
+    listing_url = _jobsforce_india_https_url(item.get("url"))
+    if not isinstance(title, str) or not title.strip() or not listing_url:
+        return None
+
+    hiring = item.get("hiring")
+    hiring = hiring if isinstance(hiring, dict) else {}
+    if isinstance(hiring.get("type"), str) and hiring["type"].strip().casefold() == "agency":
+        company = "JobsForce India (recruiting for a confidential client)"
+    else:
+        company = next(
+            (
+                value.strip()[:200]
+                for value in (hiring.get("display"), hiring.get("employer"), hiring.get("name"))
+                if isinstance(value, str) and value.strip()
+            ),
+            "Employer not specified",
+        )
+
+    location_data = item.get("location")
+    location_data = location_data if isinstance(location_data, dict) else {}
+    location_parts = [
+        value.strip()[:150]
+        for value in (
+            location_data.get("city"),
+            location_data.get("state"),
+            location_data.get("country"),
+        )
+        if isinstance(value, str) and value.strip()
+    ]
+    country = location_data.get("country")
+    confirmed_india = isinstance(country, str) and country.strip().casefold() in {
+        "india", "in", "ind",
+    }
+
+    work_mode = item.get("work_mode")
+    work_mode = work_mode.strip()[:100] if isinstance(work_mode, str) else ""
+    is_remote_value = location_data.get("remote")
+    if isinstance(is_remote_value, bool):
+        is_remote = is_remote_value
+    elif work_mode.casefold() == "remote":
+        is_remote = True
+    elif work_mode.casefold() in {"hybrid", "on-site", "onsite", "office"}:
+        is_remote = False
+    else:
+        is_remote = None
+
+    def optional_text(value, max_length=500):
+        return value.strip()[:max_length] if isinstance(value, str) else ""
+
+    salary_data = item.get("salary")
+    salary_data = salary_data if isinstance(salary_data, dict) else {}
+    experience_data = item.get("experience")
+    experience_data = experience_data if isinstance(experience_data, dict) else {}
+    apply_url = _jobsforce_india_https_url(item.get("apply_url"))
+    provider_id = str(item.get("id", "")).strip()
+    normalized = {
+        "id": f"jobsforce-india:{provider_id[:100]}" if provider_id else "",
+        "title": title.strip()[:200],
+        "company": company,
+        "location": ", ".join(location_parts)[:300],
+        "publicationDate": optional_text(item.get("posted_date"), 40),
+        "description": _plain_job_description(item.get("summary")),
+        "url": listing_url,
+        "category": optional_text(item.get("category")),
+        "employmentType": optional_text(item.get("job_type"), 100),
+        "experienceLevel": optional_text(experience_data.get("label")),
+        "experienceMetadata": [],
+        "workMode": work_mode,
+        "salary": optional_text(salary_data.get("label"), 200),
+        "skills": [],
+        "isRemote": is_remote,
+        "source": "JobsForce India",
+        "sourceType": "aggregator",
+        "sourceLabel": "JobsForce India job listings",
+    }
+    if confirmed_india:
+        normalized["region"] = "India"
+    if isinstance(country, str) and country.strip():
+        normalized["country"] = country.strip()[:100]
+    if apply_url:
+        normalized["applyUrl"] = apply_url
+    return normalized
+
+
+def _get_jobsforce_india_jobs(city="", page=1):
+    city = city.strip() if isinstance(city, str) else ""
+    try:
+        page = int(page)
+    except (TypeError, ValueError) as error:
+        raise ValueError("JobsForce India page must be a positive integer.") from error
+    if page < 1 or page > JOBSFORCE_INDIA_MAX_PAGE:
+        raise ValueError("JobsForce India page is outside the supported range.")
+
+    cache_key = (city.casefold(), page)
+    with _jobsforce_india_cache_lock:
+        now = time.monotonic()
+        _prune_provider_cache(
+            _jobsforce_india_cache,
+            _jobsforce_india_stale_cache,
+            now,
+            JOBSFORCE_INDIA_CACHE_MAX_ENTRIES,
+        )
+        cached_result = _jobsforce_india_cache.get(cache_key)
+        if cached_result and now < cached_result["expires_at"]:
+            _jobsforce_india_cache.pop(cache_key)
+            _jobsforce_india_cache[cache_key] = cached_result
+            return (
+                cached_result["jobs"],
+                cached_result["fetched_at"],
+                True,
+                cached_result["warnings"],
+                cached_result["pagination"],
+            )
+
+        params = {
+            "page": page,
+            "per_page": JOBSFORCE_INDIA_PAGE_SIZE,
+        }
+        if city:
+            params["city"] = city
+        payload = _provider_json(
+            f"{JOBSFORCE_INDIA_API_URL}?{urlencode(params)}",
+            "JobsForce India",
+            JOBSFORCE_INDIA_MAX_RESPONSE_BYTES,
+        )
+        if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+            raise ValueError("JobsForce India returned an invalid job-feed response.")
+
+        jobs = _deduplicate_provider_jobs([
+            job for job in (
+                _normalize_jobsforce_india_job(item)
+                for item in payload["results"][:JOBSFORCE_INDIA_PAGE_SIZE]
+            )
+            if job is not None
+        ])
+        if payload["results"] and not jobs:
+            raise ValueError("JobsForce India returned no valid listings.")
+
+        warnings = []
+        has_more = payload.get("has_more") is True
+        next_page = payload.get("next_page")
+        if isinstance(next_page, str) and next_page.isdigit():
+            next_page = int(next_page)
+        valid_next_page = (
+            isinstance(next_page, int)
+            and not isinstance(next_page, bool)
+            and page < next_page <= JOBSFORCE_INDIA_MAX_PAGE
+        )
+        if has_more and not valid_next_page:
+            warnings.append(
+                "JobsForce India reported more listings without a valid next page."
+            )
+        pagination = {
+            "hasMore": has_more and valid_next_page,
+            "nextPage": next_page if has_more and valid_next_page else None,
+        }
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        cache_entry = {
+            "jobs": jobs,
+            "fetched_at": fetched_at,
+            "expires_at": time.monotonic() + JOBSFORCE_INDIA_CACHE_SECONDS,
+            "warnings": warnings,
+            "pagination": pagination,
+        }
+        _jobsforce_india_stale_cache.pop(cache_key, None)
+        _store_bounded_cache_entry(
+            _jobsforce_india_cache,
+            cache_key,
+            cache_entry,
+            JOBSFORCE_INDIA_CACHE_MAX_ENTRIES,
+        )
+        return jobs, fetched_at, False, warnings, pagination
 
 
 def _fetch_remotive_source(_keyword=""):
@@ -694,6 +986,7 @@ def _fetch_remotive_source(_keyword=""):
 JOB_DISCOVERY_PROVIDERS = {
     "Remotive": lambda _keyword: _fetch_remotive_source(),
     "Jobicy": lambda keyword: _get_jobicy_jobs(keyword),
+    "JobsForce India": lambda keyword, city="", page=1: _get_jobsforce_india_jobs(city, page),
 }
 
 
@@ -1513,6 +1806,21 @@ def _classify_location_match(listing, requested_location):
     return ""
 
 
+def _is_india_eligible_listing(listing):
+    country = listing.get("country")
+    if isinstance(country, str) and country.strip():
+        return country.strip().casefold() in {"india", "in", "ind"}
+
+    if listing.get("region") == "India":
+        return True
+
+    location = listing.get("location")
+    if isinstance(location, str) and re.search(r"\bindia\b", location, re.IGNORECASE):
+        return True
+
+    return listing.get("source") == "JobsForce India"
+
+
 def _filter_provider_jobs(
     jobs,
     *,
@@ -1525,6 +1833,7 @@ def _filter_provider_jobs(
     work_mode,
     employment,
     experience,
+    region=None,
 ):
     normalized_query = _normalize_job_search_text(query)
     query_terms = normalized_query.split()
@@ -1535,6 +1844,8 @@ def _filter_provider_jobs(
     selected_experience = _normalize_company_name(experience)
     filtered = []
     for job in jobs:
+        if region == "India" and not _is_india_eligible_listing(job):
+            continue
         if query_terms and not _matches_job_text(job, query_terms):
             continue
         if role_terms and not _matches_any_role_term(job, role_terms):
@@ -1545,8 +1856,17 @@ def _filter_provider_jobs(
             continue
         if normalized_company and normalized_company not in _normalize_company_name(job.get("company", "")):
             continue
-        if location_terms and not _classify_location_match(job, location):
-            continue
+        if location_terms:
+            location_match = _classify_location_match(job, location)
+            if region == "India":
+                india_eligible_remote = (
+                    job.get("isRemote") is True
+                    and _is_india_eligible_listing(job)
+                )
+                if location_match != "local" and not india_eligible_remote:
+                    continue
+            elif not location_match:
+                continue
         known_mode = _known_work_mode(job)
         if requested_mode and known_mode and requested_mode != known_mode:
             continue
@@ -2091,6 +2411,19 @@ def get_job_discovery(
     work_mode: str | None = Query(default=None, alias="workMode", max_length=30),
     employment_type: str | None = Query(default=None, alias="employmentType", max_length=50),
     experience: str | None = Query(default=None, max_length=50),
+    region: str | None = Query(default=None, pattern="^(India|Worldwide)$"),
+    jobs_force_page: int = Query(
+        default=1,
+        alias="jobsForcePage",
+        ge=1,
+        le=JOBSFORCE_INDIA_MAX_PAGE,
+    ),
+    jobs_force_offset: int = Query(
+        default=0,
+        alias="jobsForceOffset",
+        ge=0,
+        lt=JOBSFORCE_INDIA_PAGE_SIZE,
+    ),
     mode: str = Query(default="jobs", pattern="^(jobs|company)$"),
     remote_only: bool = Query(default=False, alias="remoteOnly"),
     limit: int = Query(default=100, ge=1, le=JOB_DISCOVERY_MAX_RESULTS),
@@ -2156,6 +2489,8 @@ def get_job_discovery(
     provider_jobs = []
     provider_fetched_at = []
     provider_cache_flags = []
+    provider_pagination = {}
+    jobsforce_collected_positions = []
     tasks = {}
 
     def submit_provider(provider_name, function, *args, config=None):
@@ -2169,8 +2504,146 @@ def get_job_discovery(
             return
         tasks[future] = (provider_name, config)
 
+    has_selected_job_filters = any(
+        (
+            (query or "").strip(),
+            selected_role_terms,
+            selected_category_terms,
+            selected_skills,
+            requested_company,
+            (location or "").strip(),
+            (work_mode or "").strip(),
+            (employment_type or "").strip(),
+            (experience or "").strip(),
+            remote_only,
+        )
+    )
+
+    def filter_jobsforce_page(jobs):
+        if not has_selected_job_filters:
+            return jobs
+        filtered = _filter_provider_jobs(
+            jobs,
+            query=(query or "").strip(),
+            role_terms=selected_role_terms,
+            category_terms=selected_category_terms,
+            skills=selected_skills,
+            company=requested_company if mode == "company" else "",
+            location=(location or "").strip(),
+            work_mode=(work_mode or "").strip(),
+            employment=(employment_type or "").strip(),
+            experience=(experience or "").strip(),
+            region="India",
+        )
+        if remote_only:
+            filtered = [job for job in filtered if job.get("isRemote") is not False]
+        return filtered
+
+    def fetch_jobsforce_india(_keyword, city="", page=1, offset=0):
+        collected_jobs = []
+        collected_positions = []
+        fetched_at = ""
+        cached_flags = []
+        warnings = []
+        pagination = {"hasMore": False, "nextPage": None}
+        current_page = page
+        current_offset = offset
+
+        for _ in range(JOBSFORCE_INDIA_MAX_PAGES_PER_SEARCH):
+            if cached_flags and (
+                time.monotonic() + COMPANY_BOARD_TIMEOUT_SECONDS > deadline
+            ):
+                warnings.append(
+                    "JobsForce India pagination stopped to keep within the request deadline."
+                )
+                break
+
+            try:
+                page_jobs, page_fetched_at, page_cached, page_warnings, pagination = (
+                    _get_jobsforce_india_jobs(city, current_page)
+                )
+            except Exception as error:
+                if not cached_flags:
+                    raise
+                if isinstance(error, HTTPException):
+                    message = error.detail
+                elif isinstance(error, ValueError):
+                    message = str(error)
+                else:
+                    logging.getLogger(__name__).warning(
+                        "JobsForce India pagination failed: exception_type=%s",
+                        _safe_exception_type(error),
+                    )
+                    message = "JobsForce India pagination stopped because a provider page failed."
+                warnings.append(message)
+                break
+
+            warnings.extend(page_warnings)
+            fetched_at = max(fetched_at, page_fetched_at)
+            cached_flags.append(page_cached)
+            page_jobs = filter_jobsforce_page(page_jobs)
+            for page_offset, job in enumerate(page_jobs):
+                if page_offset < current_offset:
+                    continue
+                previous_count = len(collected_jobs)
+                deduplicated = _deduplicate_provider_jobs(collected_jobs + [job])
+                if len(deduplicated) == previous_count:
+                    continue
+                collected_jobs = deduplicated
+                collected_positions.append((current_page, page_offset))
+                if len(collected_jobs) == JOBSFORCE_INDIA_MAX_RESULTS_PER_SEARCH:
+                    break
+
+            if len(collected_jobs) >= JOBSFORCE_INDIA_MAX_RESULTS_PER_SEARCH:
+                break
+            if not has_selected_job_filters or not pagination.get("hasMore"):
+                break
+            current_page = pagination["nextPage"]
+            current_offset = 0
+
+        return (
+            collected_jobs,
+            fetched_at,
+            bool(cached_flags) and all(cached_flags),
+            warnings,
+            pagination,
+            collected_positions,
+        )
+
+    def record_jobsforce_fallback(jobs, config):
+        filtered_jobs = filter_jobsforce_page(
+            _deduplicate_provider_jobs(jobs)
+        )
+        remaining_jobs = []
+        for page_offset, job in enumerate(filtered_jobs):
+            if page_offset >= config.get("offset", 0):
+                remaining_jobs.append(job)
+                jobsforce_collected_positions.append((
+                    job,
+                    (config.get("page", 1), page_offset),
+                ))
+        return remaining_jobs
+
     for provider_name, adapter in JOB_DISCOVERY_PROVIDERS.items():
-        submit_provider(provider_name, adapter, (query or "").strip())
+        if provider_name == "JobsForce India":
+            if region != "India" or mode != "jobs":
+                continue
+            config = {
+                "city": (location or "").strip(),
+                "page": jobs_force_page,
+                "offset": jobs_force_offset,
+            }
+            submit_provider(
+                provider_name,
+                fetch_jobsforce_india,
+                (query or "").strip(),
+                config["city"],
+                config["page"],
+                config["offset"],
+                config=config,
+            )
+        else:
+            submit_provider(provider_name, adapter, (query or "").strip())
     for provider, config in board_fetches:
         label = {
             "greenhouse": "Greenhouse",
@@ -2198,7 +2671,15 @@ def get_job_discovery(
             result = future.result()
             jobs, fetched_at, cached = result[:3]
             warnings = result[3] if len(result) > 3 else []
+            pagination = result[4] if len(result) > 4 else None
+            positions = result[5] if len(result) > 5 else []
             provider_jobs.extend(jobs)
+            if provider_name == "JobsForce India":
+                if isinstance(pagination, dict):
+                    provider_pagination[provider_name] = pagination
+                jobsforce_collected_positions.extend(
+                    (job, position) for job, position in zip(jobs, positions)
+                )
             if fetched_at:
                 provider_fetched_at.append(fetched_at)
             provider_cache_flags.append(cached)
@@ -2228,7 +2709,14 @@ def get_job_discovery(
                 config,
             )
             if fallback:
-                jobs, cached_fetched_at = fallback
+                jobs, cached_fetched_at, *fallback_metadata = fallback
+                if provider_name == "JobsForce India":
+                    jobs = record_jobsforce_fallback(jobs, config)
+                    if fallback_metadata:
+                        provider_pagination[provider_name] = fallback_metadata[0] or {
+                            "hasMore": False,
+                            "nextPage": None,
+                        }
                 provider_jobs.extend(jobs)
                 provider_fetched_at.append(cached_fetched_at)
                 provider_cache_flags.append(True)
@@ -2255,7 +2743,14 @@ def get_job_discovery(
             f"{JOB_DISCOVERY_DEADLINE_SECONDS}-second request deadline."
         )
         if fallback:
-            jobs, cached_fetched_at = fallback
+            jobs, cached_fetched_at, *fallback_metadata = fallback
+            if provider_name == "JobsForce India":
+                jobs = record_jobsforce_fallback(jobs, config)
+                if fallback_metadata:
+                    provider_pagination[provider_name] = fallback_metadata[0] or {
+                        "hasMore": False,
+                        "nextPage": None,
+                    }
             provider_jobs.extend(jobs)
             provider_fetched_at.append(cached_fetched_at)
             provider_cache_flags.append(True)
@@ -2288,6 +2783,7 @@ def get_job_discovery(
                 "message": "Configured job sources are temporarily unavailable. Please retry.",
                 "providerStatus": provider_status,
                 "providerErrors": provider_errors,
+                "providerPagination": provider_pagination,
             },
         )
 
@@ -2303,13 +2799,22 @@ def get_job_discovery(
         work_mode=(work_mode or "").strip(),
         employment=(employment_type or "").strip(),
         experience=(experience or "").strip(),
+        region=region if mode == "jobs" else None,
     )
     if remote_only:
         filtered_jobs = [job for job in filtered_jobs if job.get("isRemote") is not False]
     filtered_jobs = [dict(job) for job in filtered_jobs]
     if location and location.strip():
         for job in filtered_jobs:
-            job["locationMatch"] = _classify_location_match(job, location)
+            location_match = _classify_location_match(job, location)
+            if (
+                region == "India"
+                and job.get("isRemote") is True
+                and _is_india_eligible_listing(job)
+                and location_match != "local"
+            ):
+                location_match = "remote-india"
+            job["locationMatch"] = location_match
     for job in filtered_jobs:
         classification = _classify_experience_level(job)
         job["experienceClassification"] = classification["classification"]
@@ -2322,6 +2827,27 @@ def get_job_discovery(
         job["experienceSenioritySource"] = classification["senioritySource"]
         job["experienceSeniorityEvidence"] = classification["seniorityEvidence"]
     returned_jobs = filtered_jobs[:limit]
+    jobsforce_pagination = provider_pagination.get("JobsForce India")
+    if jobsforce_pagination:
+        returned_identities = {_listing_identity(job) for job in returned_jobs}
+        first_unreturned = next(
+            (
+                position
+                for job, position in jobsforce_collected_positions
+                if _listing_identity(job) not in returned_identities
+            ),
+            None,
+        )
+        if first_unreturned:
+            page, offset = first_unreturned
+            jobsforce_pagination = {
+                "hasMore": True,
+                "nextPage": page,
+            }
+            if offset:
+                jobsforce_pagination["nextOffset"] = offset
+            provider_pagination["JobsForce India"] = jobsforce_pagination
+
     grouped_provider_status = {}
     for status in provider_status:
         name = status["name"]
@@ -2383,6 +2909,7 @@ def get_job_discovery(
         "sources": successful_sources,
         "providerStatus": provider_status,
         "providerErrors": provider_errors,
+        "providerPagination": provider_pagination,
         "partial": bool(provider_errors and successful_sources),
         "totalRetrieved": len(returned_jobs),
         "company": company_profile,
@@ -2409,6 +2936,9 @@ def post_job_discovery(filters: JobDiscoverySearchRequest):
         work_mode=filters.work_mode,
         employment_type=filters.employment_type,
         experience=filters.experience,
+        region=filters.region,
+        jobs_force_page=filters.jobs_force_page,
+        jobs_force_offset=filters.jobs_force_offset,
         mode=filters.mode,
         remote_only=filters.remote_only,
         limit=filters.limit,

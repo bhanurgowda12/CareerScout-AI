@@ -152,40 +152,87 @@ test('student profile routes create, cancel, update, view, restore, and delete s
   await expect(page.getByLabel('College name')).toHaveValue('Synthetic Test College');
 });
 
-test('job discovery searches mocked listings and filters to remote results', async ({ page }) => {
+test('job discovery applies the selected region and retains India-eligible remote results', async ({ page }) => {
   const submittedSearches = [];
   const jobs = [
     {
-      id: 'synthetic-remote',
-      title: 'Synthetic Remote QA Engineer',
-      company: 'Synthetic Remote Co',
-      url: 'https://remotive.com/remote-jobs/software-dev/synthetic-remote-qa-engineer',
+      id: 'synthetic-remote-india',
+      title: 'Synthetic India-Eligible Remote QA Engineer',
+      company: 'Synthetic India Remote Co',
+      url: 'https://remotive.com/remote-jobs/software-dev/synthetic-india-remote-qa-engineer',
       source: 'Remotive',
       isRemote: true,
-      location: 'Remote',
+      location: 'India',
+      description: 'Synthetic E2E listing for a remote quality engineer eligible in India.',
+    },
+    {
+      id: 'synthetic-remote-worldwide',
+      title: 'Synthetic Worldwide Remote QA Engineer',
+      company: 'Synthetic Worldwide Remote Co',
+      url: 'https://remotive.com/remote-jobs/software-dev/synthetic-worldwide-remote-qa-engineer',
+      source: 'Remotive',
+      isRemote: true,
+      location: 'Worldwide',
       description: 'Synthetic E2E listing for a remote quality engineer.',
     },
     {
+      id: 'synthetic-remote-unspecified',
+      title: 'Synthetic Unspecified Remote QA Engineer',
+      company: 'Synthetic Unspecified Remote Co',
+      url: 'https://remotive.com/remote-jobs/software-dev/synthetic-unspecified-remote-qa-engineer',
+      source: 'Remotive',
+      isRemote: true,
+      location: '',
+      description: 'Synthetic E2E listing with no candidate location eligibility.',
+    },
+    {
+      id: 'synthetic-remote-foreign',
+      title: 'Synthetic Foreign Remote QA Engineer',
+      company: 'Synthetic Foreign Remote Co',
+      url: 'https://remotive.com/remote-jobs/software-dev/synthetic-foreign-remote-qa-engineer',
+      source: 'Remotive',
+      isRemote: true,
+      location: 'USA',
+      description: 'Synthetic E2E listing restricted to the United States.',
+    },
+    {
       id: 'synthetic-office',
-      title: 'Synthetic Office QA Engineer',
-      company: 'Synthetic Office Co',
-      url: 'https://remotive.com/remote-jobs/software-dev/synthetic-office-qa-engineer',
+      title: 'Synthetic Bengaluru Office QA Engineer',
+      company: 'Synthetic Bengaluru Office Co',
+      url: 'https://remotive.com/remote-jobs/software-dev/synthetic-bengaluru-office-qa-engineer',
       source: 'Remotive',
       isRemote: false,
-      location: 'Bengaluru',
+      location: 'Bengaluru, India',
       description: 'Synthetic E2E listing for an office quality engineer.',
     },
   ];
   await mockBackend(page, { jobs });
   await page.route('http://127.0.0.1:8000/api/job-discovery', async (route) => {
-    submittedSearches.push(JSON.parse(route.request().postData() || '{}'));
+    const requestBody = JSON.parse(route.request().postData() || '{}');
+    submittedSearches.push(requestBody);
+    const regionFilteredJobs = requestBody.region === 'India'
+      ? jobs.filter((job) => job.location.includes('India'))
+      : jobs;
+    const responseJobs = regionFilteredJobs.map((job) => (
+      requestBody.location && job.id === 'synthetic-remote-india'
+        ? { ...job, locationMatch: 'remote-india' }
+        : job
+    ));
     await route.fulfill({
       json: {
-        jobs,
+        jobs: responseJobs,
         source: 'Remotive',
         sources: ['Remotive'],
-        providerStatus: [{ name: 'Remotive', status: 'ok', listingCount: jobs.length, matchedCount: jobs.length }],
+        providerStatus: [{ name: 'Remotive', status: 'ok', listingCount: responseJobs.length, matchedCount: responseJobs.length }],
         providerErrors: [],
+        providerPagination: requestBody.region === 'India'
+          ? {
+            'JobsForce India': {
+              hasMore: requestBody.jobsForcePage === 1,
+              nextPage: requestBody.jobsForcePage === 1 ? 2 : null,
+            },
+          }
+          : {},
         fetchedAt: '2026-01-15T12:00:00Z',
         cached: false,
       },
@@ -195,15 +242,186 @@ test('job discovery searches mocked listings and filters to remote results', asy
   await signInThroughApp(page, account);
   await openWorkspacePage(page, 'Job Discovery');
 
+  await expect(page.getByLabel('Search Region')).toHaveValue('India');
   await page.getByRole('searchbox', { name: 'Custom title or keyword' }).fill('Synthetic');
   await page.getByLabel('Work mode').selectOption({ label: 'Remote' });
   await page.getByRole('button', { name: 'Discover Jobs' }).click();
 
   await expect(page.getByRole('heading', { name: '1 listing shown' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Synthetic Remote QA Engineer' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Synthetic Office QA Engineer' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Synthetic India-Eligible Remote QA Engineer' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Synthetic Worldwide Remote QA Engineer' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Synthetic Unspecified Remote QA Engineer' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Synthetic Foreign Remote QA Engineer' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Synthetic Bengaluru Office QA Engineer' })).toHaveCount(0);
   expect(submittedSearches).toHaveLength(1);
-  expect(submittedSearches[0]).toMatchObject({ query: 'Synthetic', workMode: 'Remote' });
+  expect(submittedSearches[0]).toMatchObject({
+    query: 'Synthetic',
+    workMode: 'Remote',
+    region: 'India',
+    jobsForcePage: 1,
+  });
+  await page.getByRole('button', { name: 'Load more India listings' }).click();
+  await expect.poll(() => submittedSearches).toHaveLength(2);
+  expect(submittedSearches[1]).toMatchObject({
+    query: 'Synthetic',
+    workMode: 'Remote',
+    region: 'India',
+    jobsForcePage: 2,
+  });
+  expect(submittedSearches[1]).not.toHaveProperty('roleTerms');
+  await page.getByLabel('Search Region').selectOption('Worldwide');
+  await page.getByRole('button', { name: 'Discover Jobs' }).click();
+  await expect.poll(() => submittedSearches).toHaveLength(3);
+  expect(submittedSearches[2]).toMatchObject({ region: 'Worldwide' });
+  expect(submittedSearches[2]).not.toHaveProperty('jobsForcePage');
+  await expect(page.getByRole('heading', { name: 'Synthetic Worldwide Remote QA Engineer' })).toBeVisible();
+  await page.getByLabel('Search Region').selectOption('India');
+  await page.getByRole('searchbox', { name: /City or location/ }).fill('Bengaluru');
+  await page.getByRole('button', { name: 'Discover Jobs' }).click();
+  await expect.poll(() => submittedSearches).toHaveLength(4);
+  expect(submittedSearches[3]).toMatchObject({
+    region: 'India',
+    location: 'Bengaluru',
+    jobsForcePage: 1,
+  });
+  await expect(page.getByRole('heading', { name: 'Synthetic Worldwide Remote QA Engineer' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Synthetic India-Eligible Remote QA Engineer' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Remote listings explicitly eligible in India/ })).toBeVisible();
+});
+
+test('job discovery renders and appends complete India provider pages without duplicates', async ({ page }) => {
+  const submittedSearches = [];
+  const createIndiaPage = (pageNumber) => Array.from({ length: 20 }, (_, index) => ({
+    id: `synthetic-india-page-${pageNumber}-${index + 1}`,
+    title: pageNumber === 1 && index === 0
+      ? 'Software Engineer'
+      : pageNumber === 1 && index === 1
+        ? 'Healthcare Coordinator'
+        : pageNumber === 1 && index === 2
+          ? 'Application Analyst'
+          : `Synthetic India Page ${pageNumber} Job ${String(index + 1).padStart(2, '0')}`,
+    company: `Synthetic India Company ${pageNumber}-${index + 1}`,
+    url: `https://jobsforceindia.com/jobs/synthetic-page-${pageNumber}-${index + 1}`,
+    category: index === 2 ? 'Application Developer' : index % 2 === 0 ? 'Software Development' : 'Healthcare',
+    source: 'JobsForce India',
+    region: 'India',
+    country: 'India',
+    location: 'Bengaluru, Karnataka, India',
+    description: index === 1
+      ? 'Synthetic E2E listing confirmed for India. Work with the Software Developer team.'
+      : 'Synthetic E2E listing confirmed for India.',
+  }));
+  const pageOneJobs = createIndiaPage(1);
+  const pageTwoJobs = createIndiaPage(2);
+  const foreignJob = {
+    id: 'synthetic-foreign-remote',
+    title: 'Synthetic Foreign Remote Job',
+    company: 'Synthetic Foreign Company',
+    url: 'https://remotive.com/remote-jobs/software-dev/synthetic-foreign-remote-job',
+    source: 'Remotive',
+    region: 'United States',
+    country: 'United States',
+    location: 'United States',
+    isRemote: true,
+    description: 'Synthetic E2E listing not eligible in India.',
+  };
+  await mockBackend(page);
+  await page.route('http://127.0.0.1:8000/api/job-discovery', async (route) => {
+    const requestBody = JSON.parse(route.request().postData() || '{}');
+    submittedSearches.push(requestBody);
+    const requestedPage = requestBody.jobsForcePage;
+    const pageJobs = requestedPage === 1 ? pageOneJobs : pageTwoJobs;
+    const roleTerms = Array.isArray(requestBody.roleTerms) ? requestBody.roleTerms : [];
+    const responseJobs = [...pageJobs, foreignJob]
+      .filter((job) => requestBody.region !== 'India' || job.country === 'India')
+      .filter((job) => {
+        if (!roleTerms.length) return true;
+        const searchableText = [job.title, job.description, job.category, ...(job.skills || [])]
+          .join(' ')
+          .toLocaleLowerCase();
+        return roleTerms.some((term) => searchableText.includes(term.toLocaleLowerCase()));
+      });
+    await route.fulfill({
+      json: {
+        jobs: responseJobs,
+        source: 'JobsForce India',
+        sources: ['JobsForce India'],
+        providerStatus: [{
+          name: 'JobsForce India',
+          status: 'ok',
+          listingCount: responseJobs.length,
+          matchedCount: responseJobs.length,
+        }],
+        providerErrors: [],
+        providerPagination: {
+          'JobsForce India': {
+            hasMore: requestedPage === 1,
+            nextPage: requestedPage === 1 ? 2 : null,
+          },
+        },
+        fetchedAt: '2026-01-15T12:00:00Z',
+        cached: false,
+      },
+    });
+  });
+  const account = await createVerifiedAccount();
+  await signInThroughApp(page, account);
+  await openWorkspacePage(page, 'Job Discovery');
+
+  await expect(page.getByLabel('Search Region')).toHaveValue('India');
+  await page.getByRole('button', { name: 'Discover Jobs' }).click();
+
+  const jobCards = page.locator('.job-discovery-card');
+  await expect(jobCards).toHaveCount(20);
+  const pageOneTitles = await jobCards.locator('h3').allTextContents();
+  expect(new Set(pageOneTitles).size).toBe(20);
+  expect(pageOneTitles).toEqual(expect.arrayContaining(pageOneJobs.map((job) => job.title)));
+  const pageOneCategories = await jobCards.locator('.job-discovery-category-tag').allTextContents();
+  expect(new Set(pageOneCategories)).toEqual(new Set([
+    'Software Development',
+    'Healthcare',
+    'Application Developer',
+  ]));
+  await expect(page.getByRole('heading', { name: foreignJob.title })).toHaveCount(0);
+  expect(submittedSearches).toHaveLength(1);
+  expect(submittedSearches[0]).toMatchObject({ region: 'India', jobsForcePage: 1 });
+  expect(submittedSearches[0]).not.toHaveProperty('roleTerms');
+
+  const roleInput = page.locator('#job-discovery-role');
+  await roleInput.fill('Software Engineer');
+  await page.getByRole('button', { name: 'Discover Jobs' }).click();
+  await expect(jobCards).toHaveCount(3);
+  expect(submittedSearches[1].roleTerms).toEqual([
+    'Software Engineer',
+    'Software Developer',
+    'Application Developer',
+  ]);
+  expect(await jobCards.locator('h3').allTextContents()).toEqual(expect.arrayContaining([
+    'Software Engineer',
+    'Healthcare Coordinator',
+    'Application Analyst',
+  ]));
+
+  await roleInput.fill('');
+  await page.getByRole('button', { name: 'Discover Jobs' }).click();
+  await expect(jobCards).toHaveCount(20);
+  expect(submittedSearches[2]).not.toHaveProperty('roleTerms');
+
+  await page.getByRole('button', { name: 'Load more India listings' }).click();
+
+  await expect(jobCards).toHaveCount(40);
+  const allTitles = await jobCards.locator('h3').allTextContents();
+  expect(new Set(allTitles).size).toBe(40);
+  expect(allTitles).toEqual(expect.arrayContaining([
+    ...pageOneJobs.map((job) => job.title),
+    ...pageTwoJobs.map((job) => job.title),
+  ]));
+  await expect(page.getByRole('heading', { name: foreignJob.title })).toHaveCount(0);
+  expect(submittedSearches).toHaveLength(4);
+  expect(submittedSearches[3]).toMatchObject({ region: 'India', jobsForcePage: 2 });
+  expect(submittedSearches[3]).not.toHaveProperty('roleTerms');
+  expect(submittedSearches.filter((search) => search.jobsForcePage === 2)).toHaveLength(1);
+  await expect(page.getByRole('button', { name: 'Load more India listings' })).toHaveCount(0);
 });
 
 test('job discovery cards present complete and sparse source data accessibly across themes and actions', async ({ page }) => {
@@ -236,6 +454,19 @@ test('job discovery cards present complete and sparse source data accessibly acr
       url: 'https://remotive.com/remote-jobs/design/synthetic-junior-designer',
       source: 'Remotive',
     },
+    {
+      id: 'jobsforce-agency',
+      title: 'Synthetic India Product Engineer',
+      company: 'JobsForce India (recruiting for a confidential client)',
+      url: 'https://jobsforceindia.com/jobs/synthetic-product-engineer',
+      applyUrl: 'https://jobsforceindia.com/apply/synthetic-product-engineer',
+      source: 'JobsForce India',
+      sourceLabel: 'JobsForce India job listings',
+      region: 'India',
+      location: 'Bengaluru, Karnataka, India',
+      workMode: 'Hybrid',
+      isRemote: false,
+    },
   ];
   await mockBackend(page, { jobs });
   const account = await createVerifiedAccount();
@@ -265,8 +496,22 @@ test('job discovery cards present complete and sparse source data accessibly acr
     const sparseCard = page.locator('.job-discovery-card').filter({
       has: page.getByRole('heading', { name: 'Synthetic Junior Designer' }),
     });
+    const jobsForceCard = page.locator('.job-discovery-card').filter({
+      has: page.getByRole('heading', { name: 'Synthetic India Product Engineer' }),
+    });
     await expect(completeCard).toBeVisible();
     await expect(sparseCard).toBeVisible();
+    await expect(jobsForceCard).toBeVisible();
+    await expect(jobsForceCard.getByText('JobsForce India (recruiting for a confidential client)', { exact: true })).toBeVisible();
+    await expect(jobsForceCard.getByText('India location confirmed')).toBeVisible();
+    await expect(jobsForceCard.getByRole('link', { name: /View original posting/ }))
+      .toHaveAttribute('href', jobs[2].url);
+    await expect(jobsForceCard.getByRole('link', { name: /Apply on JobsForce India/ }))
+      .toHaveAttribute('href', jobs[2].applyUrl);
+    await expect(jobsForceCard.getByRole('button', { name: 'Save job in tracker' })).toBeVisible();
+    await expect(jobsForceCard.getByRole('button', { name: 'Open AI job analyzer' })).toBeVisible();
+    await expect(jobsForceCard.getByRole('button', { name: 'Compare with profile' })).toBeEnabled();
+    await expect(jobsForceCard.getByRole('button', { name: 'Prepare for this job' })).toBeEnabled();
     await expect(completeCard.locator('.job-discovery-category-tag')).toHaveText('Product Engineering');
     const infoGrid = completeCard.locator('.job-discovery-info-grid');
     await expect(infoGrid.getByText('Full-time', { exact: true })).toBeVisible();
@@ -328,6 +573,13 @@ test('job discovery cards present complete and sparse source data accessibly acr
     await refreshedCard.getByRole('button', { name: 'Open AI job analyzer' }).click();
     await expect(page.getByRole('heading', { name: /AI Job Match/ })).toBeVisible();
     await expect(page.getByLabel('Job description')).toHaveValue(description);
+    await page.getByRole('button', { name: 'Back to Dashboard', exact: true }).click();
+    await page.getByRole('button', { name: 'Discover Jobs' }).click();
+    const refreshedJobsForceCard = page.locator('.job-discovery-card').filter({
+      has: page.getByRole('heading', { name: 'Synthetic India Product Engineer' }),
+    });
+    await refreshedJobsForceCard.getByRole('button', { name: 'Save job in tracker' }).click();
+    await expect(page.getByRole('textbox', { name: 'Job posting URL' })).toHaveValue(jobs[2].url);
     expect(pageErrors).toEqual([]);
   } finally {
     await testEnvironment.cleanup();
