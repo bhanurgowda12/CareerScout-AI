@@ -347,7 +347,7 @@ export function isValidDiscoveryListing(listing) {
     || typeof listing.title !== 'string' || !listing.title.trim()
     || typeof listing.company !== 'string' || !listing.company.trim()
     || typeof listing.source !== 'string'
-    || !['Remotive', 'Jobicy', 'Greenhouse', 'Lever', 'Ashby'].includes(listing.source)
+    || !['Remotive', 'Jobicy', 'Greenhouse', 'Lever', 'Ashby', 'JobsForce India'].includes(listing.source)
     || typeof listing.url !== 'string' || !isValidHttpUrl(listing.url)) return false;
   try {
     const url = new URL(listing.url.trim());
@@ -357,10 +357,37 @@ export function isValidDiscoveryListing(listing) {
     if (listing.source === 'Jobicy') return host === 'jobicy.com' || host === 'www.jobicy.com';
     if (listing.source === 'Greenhouse') return ['boards.greenhouse.io', 'job-boards.greenhouse.io'].includes(host);
     if (listing.source === 'Lever') return ['jobs.lever.co', 'jobs.eu.lever.co'].includes(host);
+    if (listing.source === 'JobsForce India') {
+      const isJobsForceUrl = (value) => {
+        try {
+          const parsed = new URL(value.trim());
+          return parsed.protocol === 'https:'
+            && ['jobsforceindia.com', 'www.jobsforceindia.com'].includes(parsed.hostname.toLowerCase())
+            && !parsed.username
+            && !parsed.password
+            && (!parsed.port || parsed.port === '443');
+        } catch {
+          return false;
+        }
+      };
+      return isJobsForceUrl(listing.url)
+        && (listing.applyUrl === undefined
+          || listing.applyUrl === ''
+          || (typeof listing.applyUrl === 'string' && isJobsForceUrl(listing.applyUrl)));
+    }
     return host === 'jobs.ashbyhq.com';
   } catch {
     return false;
   }
+}
+
+export function getListingRegionLabel(listing) {
+  if (listing?.region === 'India') return 'India location confirmed';
+  const sourceLocation = normalizeSearchText(listing?.location);
+  if (listing?.isRemote === true && /\b(worldwide|anywhere|global)\b/.test(sourceLocation)) {
+    return 'Global remote listing';
+  }
+  return '';
 }
 
 export function filterDiscoveryListings(listings, { query = '', remoteOnly = false } = {}) {
@@ -411,7 +438,9 @@ export function filterAndSortDiscoveryListings(listings, filters = {}) {
     if (!matchesJobSelections(listing, { categories, role, skills })) return false;
     if (company && !normalizeSearchText(listing.company).includes(normalizeSearchText(company))) return false;
     const normalizedRequestedLocation = normalizeSearchText(location);
-    if (normalizedRequestedLocation && !getLocationMatch(listing, location)) return false;
+    if (normalizedRequestedLocation
+      && !getLocationMatch(listing, location)
+      && listing.locationMatch !== 'remote-india') return false;
     if (normalizeSearchText(workMode) && normalizeSearchText(workMode) !== 'any work mode') {
       const knownWorkMode = getKnownWorkMode(listing);
       if (knownWorkMode && knownWorkMode !== workMode) return false;
@@ -829,6 +858,7 @@ export function summarizeCompanyListings(listings) {
       (source) => source === 'description' || source === 'description-inferred',
     ).length,
     localMatches: listings.filter((listing) => listing.locationMatch === 'local').length,
+    remoteIndia: listings.filter((listing) => listing.locationMatch === 'remote-india').length,
     remoteGlobal: listings.filter((listing) => listing.locationMatch === 'remote-global').length,
     remoteUnspecified: listings.filter((listing) => listing.locationMatch === 'remote-unspecified').length,
     officialListings: listings.filter((listing) => listing.sourceType === 'official_company_board').length,

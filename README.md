@@ -422,11 +422,13 @@ Pasted and extracted resume text are compared in the browser for the current ses
 | --- | --- | --- |
 | Remotive | Remote-jobs feed | Queried by default; up to 100 normalized records; 8-hour process-local cache. |
 | Jobicy | Public remote-jobs API | Queried by default; up to two pages of 200 per keyword; 1-hour cache per keyword. |
+| JobsForce India | Public India jobs API | Queried for India-region searches; filtered searches collect up to 20 matching unique listings across at most three provider pages per request, while unfiltered searches use one page. Each provider request has a 5-second timeout and the overall discovery request has a 15-second default deadline (configurable with `CAREERSCOUT_JOB_DISCOVERY_DEADLINE_SECONDS`). Load more continues from the next provider page or, when a small response limit truncates a page, from the next unreturned item within that page. Pages are cached for 1 hour per normalized city and page. No API key is required. |
 | Greenhouse | Company board API | Queried only for a configured board identifier. |
 | Lever | Company board API | Queried only for a configured board identifier. |
 | Ashby | Company board API | Queried only for a configured board identifier. |
 
 Greenhouse, Lever, and Ashby are optional company-board integrations. They are not globally searched unless board identifiers have been configured by the operator.
+India is the Job Discovery UI default; Worldwide preserves the existing Remotive, Jobicy, and configured-board search. JobsForce India results are queried only in India mode. A source-reported India country is labeled as confirmed; explicit worldwide remote listings remain distinguished as global remote results. Agency listings always display “JobsForce India (recruiting for a confidential client)” and do not expose the API’s confidential employer fields.
 
 ### 7.2 Job Search Process
 
@@ -437,15 +439,17 @@ flowchart TD
     C --> D["Fetch configured providers concurrently"]
     D --> E["Remotive"]
     D --> F["Jobicy"]
-    D --> G["Configured Greenhouse / Lever / Ashby boards"]
-    E --> H["Validate and normalize records"]
-    F --> H
-    G --> H
-    H --> I["Deduplicate provider listings"]
-    I --> J["Classify experience and location evidence"]
-    J --> K["Apply backend query filters"]
-    K --> L["Return listings, provider status, and cache metadata"]
-    L --> M["Frontend filters, sorts, groups, and renders results"]
+    D --> G["JobsForce India for India-region searches"]
+    D --> H["Configured Greenhouse / Lever / Ashby boards"]
+    E --> I["Validate and normalize records"]
+    F --> I
+    G --> I
+    H --> I
+    I --> J["Deduplicate provider listings"]
+    J --> K["Classify experience and location evidence"]
+    K --> L["Apply backend query filters"]
+    L --> M["Return listings, provider status, and cache metadata"]
+    M --> N["Frontend filters, sorts, groups, and renders results"]
 ```
 
 ### 7.3 Search and Filtering
@@ -457,6 +461,7 @@ flowchart TD
 | Skills | Selectable skill terms are matched against available listing text, category, or provider skill tags. Multiple selected skills use an any-match approach. |
 | Company | Filters by company; company mode can select an operator-configured company board. |
 | Location | Filters or groups using provider location data and remote-location signals. |
+| Search region | India is the UI default and enables JobsForce India; Worldwide retains the existing global sources. The separate city/location field is sent to JobsForce India as its `city` query when India is selected. |
 | Work mode | Supports Remote, Hybrid, and On-site filters. Unknown metadata remains unconfirmed rather than treated as a known mismatch. |
 | Employment | Supports Full-time, Part-time, Internship, and Contract filters; missing metadata remains visible as unknown. |
 | Experience | Supports fresher/graduate, entry-level, and experienced selections. |
@@ -493,17 +498,18 @@ Opportunity type and seniority are classified separately. A job may be an intern
 - Work-mode filtering uses provider location/work-mode evidence; remote-global and remote-unspecified results are distinguished from a location-specific match.
 - Employment filtering recognizes the available full-time, part-time, internship, and contract values.
 - Missing or ambiguous values remain visible as unknown where the client filter permits; they are not silently asserted to match.
-- Provider feeds are remote-focused, so onsite and hybrid coverage is limited.
+- Remotive and Jobicy are remote-focused; JobsForce India adds source-reported India locations and work modes in India searches.
 
 ### 7.7 Provider Caching
 
 | Provider group | Cache lifetime | Cache scope |
 | --- | --- | --- |
 | Remotive | 8 hours | One process-local normalized feed. |
-| Jobicy | 1 hour | Process-local cache per keyword. |
+| Jobicy | 1 hour | Process-local cache per normalized keyword; up to 128 active entries and 128 stale-fallback entries. |
+| JobsForce India | 1 hour | Process-local cache per normalized city and numeric page; up to 512 active entries and 512 stale-fallback entries. A fetched provider page contains at most 20 records. |
 | Greenhouse, Lever, Ashby | 15 minutes | Process-local cache for configured company-board requests. |
 
-Caches are held in backend process memory. They are not shared across instances and are cleared on backend restart.
+Jobicy and JobsForce India entries are pruned from the active cache on the next provider-cache access after their one-hour expiry; the most recently fetched listings may remain in a separate bounded stale-fallback cache for up to 24 hours by default (configurable with `CAREERSCOUT_JOB_DISCOVERY_STALE_CACHE_MAX_AGE_SECONDS`) when a provider refresh fails. When a cache reaches its entry cap, its oldest entries are evicted. These caches are held in backend process memory, are not shared across instances, and are cleared on backend restart.
 
 ### 7.8 Company Board Integration
 
@@ -923,11 +929,14 @@ The `GET` endpoint accepts the same fields as query parameters; list fields can 
 | `workMode` | String or null | Optional work-mode filter. |
 | `employmentType` | String or null | Optional employment-type filter. |
 | `experience` | String or null | Optional experience/opportunity filter. |
+| `region` | `India`, `Worldwide`, or omitted | India enables JobsForce India. Omitting the field preserves the existing provider behavior for API clients. |
+| `jobsForcePage` | Integer | Numeric JobsForce India page; 1–10,000. Used with `region: "India"`; each page request is capped at 20 provider records. |
+| `jobsForceOffset` | Integer | Optional in-page continuation offset, 0–19. Use with `jobsForcePage` when the response `limit` leaves JobsForce India results unreturned. |
 | `mode` | `jobs` or `company` | General job search or company search. |
 | `remoteOnly` | Boolean | Restricts records known not to be remote. |
 | `limit` | Integer | Number of returned records; 1–500. |
 
-The response contains `jobs`, `fetchedAt`, `cached`, source names, provider status/errors, partial-result metadata, `totalRetrieved`, company metadata, and official-versus-aggregator listing counts. Each job also returns overall, opportunity-type, and seniority classifications with provenance and evidence fields; description-derived provenance is `description`. Provider failures may produce partial status or an HTTP error.
+The response contains `jobs`, `fetchedAt`, `cached`, source names, provider status/errors, `providerPagination` (including JobsForce India `hasMore` and `nextPage`, plus `nextOffset` when continuation remains within a provider page), partial-result metadata, `totalRetrieved`, company metadata, and official-versus-aggregator listing counts. A filtered India search fetches at most three JobsForce India pages and stops at 20 matching unique listings, the provider’s end, the 15-second default request deadline (configurable with `CAREERSCOUT_JOB_DISCOVERY_DEADLINE_SECONDS`), or the 5-second per-provider-request timeout. Empty-filter India searches use one page. JobsForce India preserves its original listing URL as `url` and returns a separately validated optional `applyUrl`. Each job also returns overall, opportunity-type, and seniority classifications with provenance and evidence fields; description-derived provenance is `description`. Provider failures may produce partial status or an HTTP error.
 
 ### 14.2 Learning Resources Request and Response
 
@@ -1007,6 +1016,7 @@ To run the same validation locally, use `npm ci` followed by `npm test`, `npm ru
 ## 17. Known Limitations
 
 - Remotive and Jobicy are remote-focused feeds and do not represent all local, onsite, hybrid, internship, or fresher roles.
+- JobsForce India pagination is bounded: an India search with filters scans at most three provider pages and returns up to 20 matching unique jobs, while an empty-filter search uses one provider page. Searches also respect the 15-second default discovery deadline (configurable with `CAREERSCOUT_JOB_DISCOVERY_DEADLINE_SECONDS`) and 5-second provider-request timeout. Load more continues from `nextPage` or `nextOffset`; it does not fetch the complete provider catalogue, and a filtered search may stop at the three-page cap before finding 20 matches.
 - Jobicy retrieval is capped at two pages of 200 listings per keyword/cache key; Remotive normalization is capped at 100 listings.
 - Company board searches require operator-configured Greenhouse, Lever, or Ashby board identifiers.
 - Provider experience, location, employment, work-mode, and salary metadata may be missing, ambiguous, or out of date.

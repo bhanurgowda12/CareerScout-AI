@@ -27,6 +27,7 @@ import {
   getKnownEmploymentTypes,
   getExperienceClassificationDetails,
   getKnownWorkMode,
+  getListingRegionLabel,
   getLocationMatch,
   getRoleSearchTerms,
   groupListingsByCompany,
@@ -123,6 +124,7 @@ export function JobDiscovery({
   const [searchMode, setSearchMode] = useState('jobs');
   const [query, setQuery] = useState('');
   const [companyQuery, setCompanyQuery] = useState('');
+  const [region, setRegion] = useState('India');
   const [location, setLocation] = useState('');
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [selectedSkills, setSelectedSkills] = useState([]);
@@ -155,8 +157,10 @@ export function JobDiscovery({
   const [roadmapWeeks, setRoadmapWeeks] = useState(4);
   const [completedTasks, setCompletedTasks] = useState({});
   const [expandedDescriptions, setExpandedDescriptions] = useState({});
+  const [indiaPagination, setIndiaPagination] = useState({ hasMore: false, nextPage: null });
   const requestGeneration = useRef(0);
   const activeRequest = useRef(null);
+  const lastSearchFilters = useRef(null);
   const listingQuery = query.trim();
   const activeRole = isUnrestrictedJobRole(role) ? '' : role;
 
@@ -277,6 +281,11 @@ export function JobDiscovery({
         title: `Listings with source-confirmed locations matching ${location.trim()}`,
         listings: visibleJobs.filter((job) => getLocationMatch(job, location) === 'local'),
       },
+      ...(region === 'India' ? [{
+        key: 'remote-india',
+        title: 'Remote listings explicitly eligible in India',
+        listings: visibleJobs.filter((job) => job.locationMatch === 'remote-india'),
+      }] : []),
       {
         key: 'remote-global',
         title: 'Remote worldwide listings',
@@ -299,15 +308,15 @@ export function JobDiscovery({
     ? Object.entries(groupListingsByCompany(experienceFilterResults.unknown))
     : [['', experienceFilterResults.unknown]];
 
-  async function searchJobs(event) {
-    event.preventDefault();
+  async function searchJobs(event, { page = 1, append = false } = {}) {
+    event?.preventDefault();
     if (loading) return;
     const trimmedQuery = query.trim();
-    if ((searchMode === 'company' && !companyQuery.trim())
+    if (!append && ((searchMode === 'company' && !companyQuery.trim())
       || trimmedQuery.length > MAX_JOB_SEARCH_LENGTH
       || role.trim().length > MAX_JOB_SEARCH_LENGTH
       || location.trim().length > MAX_JOB_LOCATION_LENGTH
-      || companyQuery.trim().length > MAX_JOB_LOCATION_LENGTH) {
+      || companyQuery.trim().length > MAX_JOB_LOCATION_LENGTH)) {
       setValidationError(searchMode === 'company' && !companyQuery.trim()
         ? 'Enter a company name to explore its available listings.'
         : 'Review the search terms, company name, and location length, then try again.');
@@ -318,11 +327,14 @@ export function JobDiscovery({
     setValidationError('');
     setError('');
     setHasSearched(true);
-    setHasFetched(false);
-    setJobs([]);
-    setProviderErrors([]);
-    setProviderStatuses([]);
-    setCompanyProfile(null);
+    if (!append) {
+      setHasFetched(false);
+      setJobs([]);
+      setProviderErrors([]);
+      setProviderStatuses([]);
+      setCompanyProfile(null);
+      setIndiaPagination({ hasMore: false, nextPage: null });
+    }
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
     activeRequest.current?.abort();
@@ -330,20 +342,30 @@ export function JobDiscovery({
     activeRequest.current = controller;
     setLoading(true);
     try {
-      const searchFilters = { limit: 500, mode: searchMode };
-      if (trimmedQuery) searchFilters.query = trimmedQuery;
-      if (searchMode === 'company') searchFilters.company = companyQuery.trim();
-      if (location.trim()) searchFilters.location = location.trim();
-      if (workMode !== 'Any work mode') searchFilters.workMode = workMode;
-      if (employment !== 'Any employment') searchFilters.employmentType = employment;
-      if (experience !== 'All opportunities') searchFilters.experience = experience;
-      const roleSearchTerms = activeRole ? getRoleSearchTerms(activeRole) : [];
-      if (roleSearchTerms.length) searchFilters.roleTerms = [...new Set(roleSearchTerms)];
-      if (!activeRole) {
-        const categoryTerms = getCategorySearchTerms(selectedCategories);
-        if (categoryTerms.length) searchFilters.category = categoryTerms;
+      let searchFilters;
+      if (append && lastSearchFilters.current) {
+        searchFilters = { ...lastSearchFilters.current, jobsForcePage: page };
+      } else {
+        searchFilters = { limit: 500, mode: searchMode };
+        if (searchMode === 'jobs') {
+          searchFilters.region = region;
+          if (region === 'India') searchFilters.jobsForcePage = page;
+        }
+        if (trimmedQuery) searchFilters.query = trimmedQuery;
+        if (searchMode === 'company') searchFilters.company = companyQuery.trim();
+        if (location.trim()) searchFilters.location = location.trim();
+        if (workMode !== 'Any work mode') searchFilters.workMode = workMode;
+        if (employment !== 'Any employment') searchFilters.employmentType = employment;
+        if (experience !== 'All opportunities') searchFilters.experience = experience;
+        const roleSearchTerms = activeRole ? getRoleSearchTerms(activeRole) : [];
+        if (roleSearchTerms.length) searchFilters.roleTerms = [...new Set(roleSearchTerms)];
+        if (!activeRole) {
+          const categoryTerms = getCategorySearchTerms(selectedCategories);
+          if (categoryTerms.length) searchFilters.category = categoryTerms;
+        }
+        if (selectedSkills.length) searchFilters.skills = selectedSkills;
+        lastSearchFilters.current = { ...searchFilters };
       }
-      if (selectedSkills.length) searchFilters.skills = selectedSkills;
       const { response, result: payload } = await fetchJsonWithTimeout(
         `${API_BASE_URL}/api/job-discovery`,
         {
@@ -371,7 +393,16 @@ export function JobDiscovery({
         throw new Error('The job service returned an invalid response.');
       }
       if (requestGeneration.current !== generation) return;
-      setJobs(payload.jobs.filter(isValidDiscoveryListing));
+      const receivedJobs = payload.jobs.filter(isValidDiscoveryListing);
+      setJobs((current) => append
+        ? [
+          ...current,
+          ...receivedJobs.filter((received) => !current.some((existing) => (
+            existing.url === received.url
+            || (received.id && existing.id === received.id && existing.source === received.source)
+          ))),
+        ]
+        : receivedJobs);
       setFetchedAt(typeof payload.fetchedAt === 'string' ? payload.fetchedAt : '');
       setIsCached(payload.cached === true);
       setSources(Array.isArray(payload.sources) ? payload.sources : [payload.source].filter(Boolean));
@@ -379,6 +410,16 @@ export function JobDiscovery({
       setProviderErrors(Array.isArray(payload.providerErrors)
         ? payload.providerErrors.filter((item) => typeof item === 'string')
         : []);
+      const jobsForcePagination = payload.providerPagination?.['JobsForce India'];
+      setIndiaPagination(region === 'India' && searchMode === 'jobs'
+        ? {
+          hasMore: jobsForcePagination?.hasMore === true
+            && Number.isInteger(jobsForcePagination?.nextPage),
+          nextPage: Number.isInteger(jobsForcePagination?.nextPage)
+            ? jobsForcePagination.nextPage
+            : null,
+        }
+        : { hasMore: false, nextPage: null });
       setCompanyProfile(payload.company && typeof payload.company === 'object' ? payload.company : null);
       setCompanyStatus(typeof payload.companyStatus === 'string' ? payload.companyStatus : '');
       setHasFetched(true);
@@ -448,6 +489,7 @@ export function JobDiscovery({
     const sourceDisplayLabel = typeof job.sourceLabel === 'string' && job.sourceLabel.trim()
       ? job.sourceLabel.trim()
       : job.source;
+    const regionDisplayLabel = getListingRegionLabel(job);
     const experienceDetails = getExperienceClassificationDetails(job);
     const description = typeof job.description === 'string' ? job.description : '';
     const normalizedDescription = description.replace(/\s+/g, ' ').trim();
@@ -529,6 +571,7 @@ export function JobDiscovery({
           </header>
           <div className="job-discovery-card-badges" role="group" aria-label="Listing classification">
             <span className="job-discovery-badge">{sourceDisplayLabel}</span>
+            {regionDisplayLabel && <span className="job-discovery-badge">{regionDisplayLabel}</span>}
             <span
               className={`job-discovery-experience-badge job-discovery-experience-badge--${experienceDetails.opportunityType.source}`}
               aria-label={opportunityTypeBadge}
@@ -688,6 +731,11 @@ export function JobDiscovery({
             <a className="job-discovery-action job-discovery-action--primary" href={job.url} target="_blank" rel="noopener noreferrer">
               View original posting <span aria-hidden="true">↗</span>
             </a>
+            {job.applyUrl && (
+              <a className="job-discovery-action" href={job.applyUrl} target="_blank" rel="noopener noreferrer">
+                Apply on JobsForce India <span aria-hidden="true">↗</span>
+              </a>
+            )}
             <button className="job-discovery-action" type="button" onClick={() => trackListing(job)}>
               Save job in tracker
             </button>
@@ -873,6 +921,19 @@ export function JobDiscovery({
               placeholder="e.g. Bengaluru"
             />
           </label>
+          {searchMode === 'jobs' && (
+            <label className="form-field" htmlFor="job-discovery-region">
+              <span>Search Region</span>
+              <select
+                id="job-discovery-region"
+                value={region}
+                onChange={(event) => setRegion(event.target.value)}
+              >
+                <option>India</option>
+                <option>Worldwide</option>
+              </select>
+            </label>
+          )}
           <div className="form-field job-discovery-category-picker">
             <span id="job-discovery-categories-label">Categories <small>(optional; choose one or more)</small></span>
             <details>
@@ -934,7 +995,7 @@ export function JobDiscovery({
       </form>
 
       <aside className="job-discovery-source-note">
-        <p><strong>Live listings:</strong> CareerScout queries <a href="https://remotive.com/remote-jobs" target="_blank" rel="noopener noreferrer">Remotive</a> and the public <a href="https://jobicy.com/jobs-rss-feed" target="_blank" rel="noopener noreferrer">Jobicy API</a> (remote-focused aggregators). Jobicy results use cursor pagination within a bounded request limit. Public Greenhouse, Lever, and Ashby company boards are searched only when their company board IDs are configured by the backend operator. Results are not a complete inventory of openings. Clear title and description signals are labeled as inferences, provider levels as source-reported, and unknown experience stays visible in a separate unconfirmed group when an experience filter is active.</p>
+        <p><strong>Live listings:</strong> India searches also query the public <a href="https://jobsforceindia.com/" target="_blank" rel="noopener noreferrer">JobsForce India</a> API, one bounded page at a time. Results with a source-reported India country are labeled as confirmed; explicit worldwide remote listings remain labeled global. <a href="https://remotive.com/remote-jobs" target="_blank" rel="noopener noreferrer">Remotive</a> and the public <a href="https://jobicy.com/jobs-rss-feed" target="_blank" rel="noopener noreferrer">Jobicy API</a> are remote-focused aggregators; Jobicy uses cursor pagination within a bounded request limit. Public Greenhouse, Lever, and Ashby company boards are searched only when their company board IDs are configured by the backend operator. Results are not a complete inventory of openings. Clear title and description signals are labeled as inferences, provider levels as source-reported, and unknown experience stays visible in a separate unconfirmed group when an experience filter is active.</p>
       </aside>
       {providerErrors.length > 0 && hasFetched && (
         <div className="job-discovery-partial-note" role="status">
@@ -975,6 +1036,7 @@ export function JobDiscovery({
           {location.trim() && (
             <p>
               Location results: {companySummary.localMatches} source-confirmed local,
+              {' '}{companySummary.remoteIndia} remote explicitly eligible in India,
               {' '}{companySummary.remoteGlobal} remote worldwide,
               {' '}{companySummary.remoteUnspecified} remote with location not stated.
               {' '}A remote-global result is not presented as located in {location.trim()}.
@@ -1215,6 +1277,18 @@ export function JobDiscovery({
             </details>
           )}
         </section>
+      )}
+      {!loading && !error && hasSearched && searchMode === 'jobs' && region === 'India' && indiaPagination.hasMore && (
+        <div className="job-discovery-state job-discovery-pagination">
+          <p>JobsForce India has more listings beyond this bounded page.</p>
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => searchJobs(null, { page: indiaPagination.nextPage, append: true })}
+          >
+            Load more India listings
+          </button>
+        </div>
       )}
 
       {externalSearchLinks.length > 0 && (
